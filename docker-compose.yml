@@ -1,0 +1,26 @@
+# Rumbo en Docker
+#
+#   Arrancar:     docker compose up -d
+#   Ver la llave: docker compose logs rumbo     (sale la dirección para abrirla)
+#   Actualizar:   docker compose pull && docker compose up -d
+#
+# Tus datos están en el volumen «rumbo_datos» y no se tocan al actualizar.
+# NO abras el puerto 8765 a internet en tu router: para entrar desde fuera de casa, usa una VPN (Tailscale).
+
+services:
+  rumbo:
+    image: ghcr.io/danidm98/rumbo:latest   # o una versión fija, por ejemplo ghcr.io/danidm98/rumbo:2.0.0
+    # build: .                              # para construirla tú desde el código, en vez de descargarla
+    container_name: rumbo
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    volumes:
+      - rumbo_datos:/data
+    environment:
+      - TZ=Europe/Madrid
+      # Si entras con un nombre propio que Rumbo no reconoce (rumbo.midominio.com), añádelo aquí:
+      # - PATRIMONIO_HOSTS_PERMITIDOS=rumbo.midominio.com
+
+volumes:
+  rumbo_datos:

@@ -26,6 +26,8 @@
   const nombre = p => p ? (p.corto || p.nombre) : "¿?";
   const prod = id => E.cfg.productos.find(p => p.id === id);
   const soloSaldo = p => SOLO_SALDO.includes(p.tipo);
+  // Productos a los que se les pueden anotar movimientos. A una cuenta, solo sus intereses.
+  const conMovimientos = p => !soloSaldo(p) || p.tipo === "efectivo";
   const manual = p => p.fuente === "manual" || soloSaldo(p);
   const opciones = (obj, sel) => Object.entries(obj)
     .map(([k, v]) => `<option value="${esc(k)}"${k === sel ? " selected" : ""}>${esc(v)}</option>`).join("");
@@ -35,13 +37,26 @@
   };
   E.vista = new URLSearchParams(location.search).get("vista") || recuerda.lee("patrimonio.editor") || "productos";
 
+  // El perfil de esta página va en cada cambio: si en otra pestaña se cambió de perfil, el servidor no guarda.
+  const cabeceraPerfil = () => (window.PERFILES && window.PERFILES.activo ? { "X-Rumbo-Perfil": window.PERFILES.activo } : {});
+  // Al volver a esta pestaña, si el perfil activo ya no es el suyo, se recarga con el bueno.
+  document.addEventListener("visibilitychange", async () => {
+    if (document.hidden || !window.PERFILES) return;
+    try {
+      const r = await fetch("api/perfiles", { cache: "no-store" });
+      const j = await r.json();
+      if (j && j.activo && j.activo !== window.PERFILES.activo) location.reload();
+    } catch (e) { /* sin conexión: ya avisará al guardar */ }
+  });
+
   async function api(metodo, url, cuerpo) {
     const r = await fetch(url, {
-      method: metodo, headers: { "Content-Type": "application/json" },
+      method: metodo, headers: { "Content-Type": "application/json", ...cabeceraPerfil() },
       body: cuerpo ? JSON.stringify(cuerpo) : undefined,
     });
     let j = {};
     try { j = await r.json(); } catch (e) { /* respuesta vacía */ }
+    if (r.status === 409 && j.perfilCambiado) { alert(j.errores.join("\n")); location.reload(); throw new Error(j.errores[0]); }
     if (!r.ok || j.ok === false) throw new Error((j.errores || [j.error || "Algo ha fallado. ¿Sigue abierta la ventana negra de la app?"]).join("\n"));
     return j;
   }
@@ -140,7 +155,52 @@
     }, "Continuar");
   }
   function soloPropio(fn) {
-    return (...a) => (E.modo === "demo" ? empezar() : fn(...a));
+    return (...a) => (E.modo === "demo" ? empezar()
+      : E.modo === "todos" ? alert("Estás viendo «Todos juntos», que solo sirve para mirar. Elige un perfil en el selector de arriba para cambiar sus datos.")
+      : fn(...a));
+  }
+
+  /* ---------------------------------------------- perfiles */
+  async function perfiles() {
+    let P;
+    try { P = await api("GET", "api/perfiles"); } catch (x) { alert(x.message); return; }
+    if (E.modo === "demo" && P.lista.length < 2) {
+      alert("Primero empieza tu propia cartera con «Empezar con mis datos». Luego podrás añadir la de tu pareja o tus hijos.");
+      return;
+    }
+    const filas = P.lista.map(x => `<div class="perfilFila">
+        ${campo(x.id === "principal" ? "Tu perfil (el principal)" : "Perfil", `<input name="n_${esc(x.id)}" value="${esc(x.nombre)}" maxlength="40">`)}
+        ${x.id === "principal" ? "<span></span>" : `<button type="button" class="btn" data-borrar="${esc(x.id)}" style="margin-top:22px">Borrar</button>`}
+      </div>`).join("");
+    const f = abreModal("Perfiles", `
+      <p>Cada perfil es una cartera aparte: la tuya, la de tu pareja, la de tus hijos… Arriba eliges cuál ver, y con
+        «Todos juntos» ves la suma de todas.</p>
+      <div style="margin-top:10px">${filas}</div>
+      ${seccion("Añadir un perfil")}
+      ${campo("Nombre", '<input name="nuevo" maxlength="40" placeholder="Por ejemplo: Ana, o Cuenta de Lucas">', "opcional")}
+      <p class="ayuda">El perfil nuevo empieza vacío. Sus datos se guardan en <code>mis_datos/perfiles</code>.</p>`,
+    async f => {
+      const d = campos(f);
+      for (const x of P.lista) {
+        const nuevo = (d["n_" + x.id] || "").trim();
+        if (nuevo && nuevo !== x.nombre) await api("POST", "api/perfiles/renombrar", { id: x.id, nombre: nuevo });
+      }
+      if ((d.nuevo || "").trim()) {
+        await api("POST", "api/perfiles", { nombre: d.nuevo.trim() });
+        recuerda.guarda("patrimonio.tab", "datos");
+        recuerda.guarda("patrimonio.editor", "productos");
+      }
+      location.reload();
+      return null;
+    }, "Guardar");
+    f.querySelectorAll("[data-borrar]").forEach(b => {
+      b.onclick = async () => {
+        const x = P.lista.find(y => y.id === b.dataset.borrar);
+        if (!confirm(`¿Borrar el perfil «${x.nombre}» y toda su cartera?\n\nNo se pierde del todo: su carpeta se guarda en mis_datos/copias por si te arrepientes.`)) return;
+        try { await api("POST", "api/perfiles/borrar", { id: x.id }); location.reload(); } catch (e) { alert(e.message); }
+      };
+    });
+    if (P.lista.length < 2) f.elements.nuevo.focus();
   }
 
   /* ---------------------------------------------- pintado general */
@@ -149,6 +209,12 @@
     if (!cont) return;
     if (!E.cfg) { cont.innerHTML = '<p class="subt" style="margin-top:24px">Cargando tus datos…</p>'; return; }
     let html = "";
+    if (E.modo === "todos") {
+      cont.innerHTML = `<section class="tarjeta bienvenida"><h2>Todos juntos</h2>
+        <p class="subt">Esta vista suma las carteras de todos los perfiles y solo sirve para mirar. Para añadir o cambiar
+        datos, elige un perfil en el selector de arriba.</p></section>`;
+      return;
+    }
     // En la demo ya se ve arriba el aviso con el botón «Empezar con mis datos».
     if (E.modo !== "demo" && !E.cfg.productos.length) {
       html += `<section class="tarjeta bienvenida"><h2>Tu cartera está vacía</h2><ol>
@@ -161,11 +227,12 @@
     }
     html += `<div class="edBarra"><div class="segm" id="edVistas"></div><span class="sp"></span>
       ${!D && E.cfg.productos.length ? '<button class="btn" data-acc="verPanel">Ver mi panel →</button>' : ""}
+      ${E.modo === "propio" ? '<button class="btn" data-acc="objetivo" title="El objetivo de la barra de progreso del panel">Mi objetivo</button>' : ""}
       ${E.modo === "propio" ? '<button class="btn" data-acc="reiniciar">Empezar de nuevo…</button>' : ""}</div>
       <div id="edAvisos" class="avisos"></div><div id="edCuerpo"></div>`;
     cont.innerHTML = html;
 
-    const vistas = [["productos", "Productos"], ["movimientos", "Movimientos"], ["saldos", "Saldos y valores"], ["importar", "Importar"], ["copias", "Copias y web"]];
+    const vistas = [["productos", "Productos"], ["movimientos", "Movimientos"], ["saldos", "Saldos y valores"], ["importar", "Importar"], ["copias", "Copias y exportar"]];
     const seg = $("#edVistas");
     vistas.forEach(([id, et]) => {
       const b = document.createElement("button");
@@ -268,6 +335,8 @@
         ${campo("Color en los gráficos", `<div class="colores">${colores}</div>`)}
         <label class="interruptor ancho"><input type="checkbox" name="largoPlazo"><span class="pista"></span>
           <span><b>Inversión a largo plazo</b><small>El botón «Solo largo plazo» del panel quita lo que no lo es: colchón, cuentas…</small></span></label>
+        <label class="interruptor ancho"><input type="checkbox" name="liquidez"><span class="pista"></span>
+          <span><b>Cuenta como liquidez</b><small>Dinero que puedes tener en el banco en unos días (cuentas, monetarios…). Se suma en «Liquidez y fondo de emergencia».</small></span></label>
       </div>
       <p class="relleno" id="bRelleno" hidden></p>
 
@@ -279,14 +348,18 @@
           ${campo("Línea de respaldo", '<input name="respaldo" placeholder="BTCW.SW">', "Yahoo")}
           ${campo("Moneda respaldo", '<input name="respaldoMoneda" maxlength="3" placeholder="CHF">')}
           ${campo("Precio en vivo", '<input name="vivo" placeholder="bitcoin">', "id CoinGecko")}
+          ${campo("Reparto como el de", '<input name="expoComo" placeholder="IE00BYX5NX33">', "ISIN de un fondo parecido", "ancho")}
           ${campo("Descripción", '<textarea name="papel" rows="2" placeholder="Para qué tienes este producto"></textarea>', "opcional", "ancho")}
         </div>
         <p class="ayuda">El <b>respaldo</b> contrasta cada día el precio con otra línea del mismo producto y usa esa
-          cuando no coinciden. El <b>precio en vivo</b> mueve el valor minuto a minuto con una criptomoneda.</p>
+          cuando no coinciden. El <b>precio en vivo</b> mueve el valor minuto a minuto con una criptomoneda.
+          <b>Reparto como el de</b>: para un plan o una cartera que no cotiza, el ISIN de un fondo que invierta en lo mismo
+          (por ejemplo, el de un indexado al MSCI World): sus países y sectores se usan en «Dónde está tu dinero».</p>
       </details>`,
     async f => {
       const d = campos(f);
       d.largoPlazo = f.elements.largoPlazo.checked;
+      d.liquidez = f.elements.liquidez.checked;
       if (!nuevo) d.id = p.id;
       const item = await guarda("productos", d);
       if (!nuevo) return null;
@@ -294,7 +367,14 @@
       return manual(item) ? () => formValor(null, item.id) : () => formMovimiento(null, item.id);
     }, nuevo ? "Guardar producto" : "Guardar cambios");
 
+    // Por defecto son liquidez las cuentas y los fondos monetarios.
+    const liquidezDefecto = () => f.elements.tipo.value === "efectivo" ||
+      /monetari/i.test([f.elements.nombre.value, f.elements.clase.value].join(" "));
     rellena(f, { ...p, ter: p.ter != null ? decimal(+(p.ter * 100).toFixed(4)) : "" });
+    f.elements.liquidez.checked = p.liquidez != null ? !!p.liquidez : liquidezDefecto();
+    let liquidezTocada = p.liquidez != null;
+    f.elements.liquidez.addEventListener("change", () => { liquidezTocada = true; });
+    f.addEventListener("change", e => { if (!liquidezTocada && e.target.name !== "liquidez") f.elements.liquidez.checked = liquidezDefecto(); });
     const ajusta = () => {
       const saldo = SOLO_SALDO.includes(f.elements.tipo.value);
       const online = !saldo && f.elements.fuente.value !== "manual";
@@ -358,7 +438,7 @@
 
   async function borrarProducto(id) {
     const p = prod(id);
-    const nm = E.cfg.movimientos.filter(m => m.producto === id).length;
+    const nm = E.cfg.movimientos.filter(m => m.producto === id || m.destino === id).length;
     const nv = E.cfg.valoraciones.filter(v => v.producto === id).length;
     const extra = nm || nv ? `\n\nSe borrarán también sus ${nm} movimientos y ${nv} valores anotados.` : "";
     if (!confirm(`¿Borrar «${nombre(p)}»?${extra}\n\nSi te equivocas, hay copias automáticas en mis_datos/copias.`)) return;
@@ -367,12 +447,30 @@
 
   /* ---------------------------------------------- movimientos */
   function vistaMovimientos() {
-    const cotizables = E.cfg.productos.filter(p => !soloSaldo(p));
+    const cotizables = E.cfg.productos.filter(conMovimientos);
     const movs = E.cfg.movimientos
-      .filter(m => E.filtro === "todos" || m.producto === E.filtro)
+      .filter(m => E.filtro === "todos" || m.producto === E.filtro || m.destino === E.filtro)
       .sort((a, b) => a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0);
     const filas = movs.map(m => {
       const p = prod(m.producto);
+      if (m.tipo === "ajuste") {
+        return `<tr><td>${fecha(m.fecha)}</td><td style="text-align:left">${p ? `<i class="pt" style="background:var(--s${p.slot || 1})"></i>` : ""}${esc(nombre(p))}</td>
+          <td style="text-align:left">Ajuste</td><td>= ${num(m.unidades)}</td><td>—</td><td>—</td>
+          <td class="nota" title="${esc(m.nota)}">${esc(m.nota || "")}</td>
+          <td class="acc"><button data-acc="editarMov" data-id="${esc(m.id)}">Editar</button>
+            <button data-acc="borrarMov" data-id="${esc(m.id)}">Borrar</button></td></tr>`;
+      }
+      if (m.tipo === "traspaso") {
+        const d = prod(m.destino);
+        return `<tr><td>${fecha(m.fecha)}</td><td style="text-align:left">${p ? `<i class="pt" style="background:var(--s${p.slot || 1})"></i>` : ""}${esc(nombre(p))}
+            → ${d ? `<i class="pt" style="background:var(--s${d.slot || 1});margin-left:4px"></i>` : ""}${esc(nombre(d))}</td>
+          <td style="text-align:left">Traspaso${m.total ? " total" : ""}</td>
+          <td>${m.unidades ? "−" + num(m.unidades) : "—"}${m.unidadesDestino ? ` <small>/ +${num(m.unidadesDestino)}</small>` : ""}</td>
+          <td>${eur(m.importe)}</td><td>—</td>
+          <td class="nota" title="${esc(m.nota)}">${esc(m.nota || "")}</td>
+          <td class="acc"><button data-acc="editarMov" data-id="${esc(m.id)}">Editar</button>
+            <button data-acc="borrarMov" data-id="${esc(m.id)}">Borrar</button></td></tr>`;
+      }
       const precio = m.unidades ? (m.importe - (m.comision || 0)) / m.unidades : null;
       return `<tr><td>${fecha(m.fecha)}</td><td style="text-align:left">${p ? `<i class="pt" style="background:var(--s${p.slot || 1})"></i>` : ""}${esc(nombre(p))}</td>
         <td style="text-align:left">${esc(E.tiposMov[m.tipo] || m.tipo)}</td>
@@ -384,10 +482,14 @@
           <button data-acc="borrarMov" data-id="${esc(m.id)}">Borrar</button></td></tr>`;
     }).join("");
     return `<section class="tarjeta"><header><h2>Movimientos</h2>
-        <span class="subt">Compras, ventas, dividendos y comisiones</span><span class="sp"></span>
+        <span class="subt">Compras, ventas, traspasos, dividendos y comisiones</span><span class="sp"></span>
         <select id="edFiltro" aria-label="Filtrar por producto"><option value="todos">Todos los productos</option>
           ${cotizables.map(p => `<option value="${esc(p.id)}"${p.id === E.filtro ? " selected" : ""}>${esc(nombre(p))}</option>`).join("")}</select>
+        <button class="btn" data-acc="nuevoAjuste" title="Si las participaciones no coinciden con las de tu banco">Cuadrar participaciones</button>
+        <button class="btn" data-acc="nuevoTraspaso" title="De un fondo o plan a otro, sin vender">⇄ Traspaso</button>
+        <button class="btn" data-acc="periodica" title="La aportación de cada mes: Rumbo la rellena con el precio de cada día">↻ Periódica</button>
         <button class="btn prim" data-acc="nuevoMov">+ Añadir movimiento</button></header>
+      ${avisoPeriodicas()}
       ${filas ? `<div class="tablaEnv alto"><table class="dt"><thead><tr><th>Fecha</th><th style="text-align:left">Producto</th>
         <th style="text-align:left">Tipo</th><th>Unidades</th><th>Importe</th><th>Precio por unidad</th>
         <th style="text-align:left">Nota</th><th></th></tr></thead><tbody>${filas}</tbody></table></div>
@@ -401,13 +503,38 @@
     dividendo: "Lo que te ingresaron por el dividendo o el cupón.",
     comision: "Comisiones sueltas, como la de custodia. Las de compra y venta ya van dentro de su importe.",
   };
+  const AYUDA_INMUEBLE = {
+    dividendo: "Lo que te ha pagado el inquilino. Puedes anotarlo cada mes o sumado por año. No cambia el valor del " +
+      "inmueble (ese lo anotas en «Saldos y valores»): sirve para ver lo que te rinde.",
+    comision: "Gastos del inmueble: comunidad, IBI, seguro, reparaciones, gestoría… Se restan de lo que te rinde.",
+  };
+  const AYUDA_INTERESES = "Los intereses que te ha pagado la cuenta, ya descontada la retención. No cambian el saldo " +
+    "(ese lo anotas en «Saldos y valores»): sirven para ver cuánto te rinde en «Rendimiento».";
 
-  function formMovimiento(m, productoId) {
-    const cotizables = E.cfg.productos.filter(p => !soloSaldo(p));
+  // Monedas en las que se puede escribir el importe de un movimiento (se guarda en euros).
+  const SIMBOLO = { EUR: "€", USD: "$", GBP: "£", CHF: "CHF", JPY: "¥", CAD: "CAD", AUD: "AUD" };
+  const monedasDe = p => {
+    const propia = p && p.moneda ? (/^GB[pX]$/.test(p.moneda) ? "GBP" : p.moneda.toUpperCase()) : "EUR";
+    return [...new Set(["EUR", propia, "USD"])];
+  };
+  const CAMBIOS = {};
+  async function cambio(moneda, fecha) {
+    const k = moneda + fecha;
+    if (!(k in CAMBIOS)) {
+      CAMBIOS[k] = api("GET", `api/cambio?moneda=${moneda}&fecha=${fecha}`).then(j => j.ok ? j.cambio : null).catch(() => null);
+    }
+    return CAMBIOS[k];
+  }
+
+  function formMovimiento(m, productoId, tipo) {
+    const cotizables = E.cfg.productos.filter(conMovimientos);
     if (!cotizables.length) { alert("Primero añade un producto en «Productos»."); return; }
     const nuevo = !m;
-    m = m || { fecha: hoy(), tipo: "compra", producto: productoId || (E.filtro !== "todos" ? E.filtro : cotizables[0].id) };
-    const pildoras = Object.entries(E.tiposMov).map(([k, v]) =>
+    m = m || { fecha: hoy(), tipo: tipo || "compra", producto: productoId || (E.filtro !== "todos" ? E.filtro : cotizables[0].id) };
+    if (nuevo && prod(m.producto) && prod(m.producto).tipo === "efectivo") m.tipo = "dividendo";
+    if (m && m.tipo === "traspaso") return formTraspaso(m);
+    if (m && m.tipo === "ajuste") return formAjuste(m);
+    const pildoras = Object.entries(E.tiposMov).filter(([k]) => k !== "traspaso" && k !== "ajuste").map(([k, v]) =>
       `<label><input type="radio" name="tipo" value="${esc(k)}"><span>${esc(k === "dividendo" ? "Dividendo" : v)}</span></label>`).join("");
     const f = abreModal(nuevo ? "Añadir movimiento" : "Editar movimiento", `
       <div class="pildoras">${pildoras}</div>
@@ -415,9 +542,11 @@
         ${campo("Producto", `<select name="producto">${cotizables.map(p =>
           `<option value="${esc(p.id)}">${esc(nombre(p))}</option>`).join("")}</select>`, "", "ancho")}
         ${campo("Fecha", `<input type="date" name="fecha" max="${hoy()}">`)}
-        ${campo("Unidades", '<input name="unidades" inputmode="decimal" placeholder="0">', "participaciones, acciones…", "siUnid")}
-        ${campo("Importe total", '<div class="conSufijo"><input name="importe" inputmode="decimal" placeholder="0,00"><span>€</span></div>')}
-        ${campo("Comisión", '<div class="conSufijo"><input name="comision" inputmode="decimal" placeholder="0,00"><span>€</span></div>', "ya incluida en el importe", "siCom")}
+        ${campo("Unidades", `<div class="conBoton"><input name="unidades" inputmode="decimal" placeholder="0">
+          <button type="button" class="btn" id="mTodas" title="Rellena las unidades exactas que tenías ese día">Todas</button></div>`, "participaciones, acciones…", "siUnid")}
+        ${campo("Importe total", `<div class="conSufijo conMoneda"><input name="importe" inputmode="decimal" placeholder="0,00">
+          <select name="moneda" aria-label="Moneda del importe" title="¿Pagaste en otra moneda? Elígela y se pasa a euros con el cambio de ese día"></select></div>`)}
+        ${campo("Comisión", '<div class="conSufijo"><input name="comision" inputmode="decimal" placeholder="0,00"><span id="mSufCom">€</span></div>', "ya incluida en el importe", "siCom")}
         ${campo("Nota", '<input name="nota" maxlength="200" placeholder="Por ejemplo: aportación mensual">', "opcional", "ancho")}
       </div>
       <div class="resumen"><span id="mAyuda"></span><b id="mPrecio"></b></div>`,
@@ -430,27 +559,400 @@
       return null;
     }, nuevo ? "Guardar movimiento" : "Guardar cambios");
     rellena(f, { ...m, unidades: decimal(m.unidades || ""), importe: decimal(m.importe), comision: decimal(m.comision) });
+    const selMoneda = f.elements.moneda;
+    const ponMonedas = () => {
+      const antes = selMoneda.value || "EUR";
+      const lista = monedasDe(prod(f.elements.producto.value));
+      selMoneda.innerHTML = lista.map(c => `<option value="${c}">${SIMBOLO[c] && SIMBOLO[c] !== c ? `${SIMBOLO[c]} ${c}` : c}</option>`).join("");
+      selMoneda.value = lista.includes(antes) ? antes : "EUR";
+    };
+    ponMonedas();
+    f.elements.producto.addEventListener("change", ponMonedas);
     const ajusta = () => {
-      const t = f.elements.tipo.value;
       const p = prod(f.elements.producto.value);
+      // Una cuenta solo admite intereses: el resto de pestañas desaparecen.
+      const cuenta = !!(p && p.tipo === "efectivo");
+      const piso = !!(p && p.tipo === "inmueble");
+      f.querySelectorAll(".pildoras label").forEach(l => {
+        const v = l.querySelector("input").value;
+        l.hidden = cuenta && v !== "dividendo";
+        l.querySelector("span").textContent = v === "dividendo" ? (cuenta ? "Intereses" : piso ? "Alquiler" : "Dividendo")
+          : v === "comision" && piso ? "Gasto" : E.tiposMov[v];
+      });
+      f.querySelector(".pildoras").classList.toggle("una", cuenta);
+      if (cuenta && f.elements.tipo.value !== "dividendo") f.elements.tipo.value = "dividendo";
+      const t = f.elements.tipo.value;
+      const mon = selMoneda.value || "EUR", sim = SIMBOLO[mon] || mon;
+      $("#mSufCom").textContent = sim;
       const conUnid = t === "compra" || t === "venta";
       f.querySelector(".siUnid").hidden = !conUnid;
       f.querySelector(".siCom").hidden = !conUnid;
       // Con la caja de unidades oculta, la del importe ocupa su hueco sin descuadrar la rejilla.
-      $("#mAyuda").textContent = AYUDA_IMPORTE[t] + (p && manual(p) && t === "compra"
+      $("#mTodas").hidden = t !== "venta";
+      $("#mAyuda").textContent = (cuenta ? AYUDA_INTERESES : piso && AYUDA_INMUEBLE[t] || AYUDA_IMPORTE[t]) + (p && manual(p) && t === "compra"
         ? " Como este producto se valora a mano, las unidades son opcionales." : "");
       const u = leeNum(f.elements.unidades.value), imp = leeNum(f.elements.importe.value);
       const com = leeNum(f.elements.comision.value) || 0;
-      $("#mPrecio").textContent = conUnid && u > 0 && imp > 0 ? `${num((imp - com) / u)} € / unidad` : "";
+      $("#mPrecio").textContent = conUnid && u > 0 && imp > 0 ? `${num((imp - com) / u)} ${sim} / unidad` : "";
+      // En otra moneda: cuántos euros son, con el cambio de ese día (es lo que se guarda).
+      if (mon !== "EUR") {
+        const fe = f.elements.fecha.value;
+        const pedido = mon + fe + imp;
+        f.dataset.pedido = pedido;
+        cambio(mon, fe).then(fx => {
+          if (f.dataset.pedido !== pedido) return;
+          $("#mAyuda").textContent = AYUDA_IMPORTE[t] + (fx
+            ? ` Se guarda en euros: ${imp > 0 ? `≈ ${eur(imp * fx)}` : `1 ${mon} = ${num(fx)} €`} con el cambio del ${fecha(fe)}.`
+            : ` No encuentro el cambio de ${mon} de ese día: revisa tu conexión o escribe el importe en euros.`);
+        });
+      }
+    };
+    f.oninput = ajusta;
+    f.onchange = ajusta;
+    $("#mTodas").onclick = async () => {
+      try {
+        const q = new URLSearchParams({ producto: f.elements.producto.value, fecha: f.elements.fecha.value || hoy() });
+        if (!nuevo) q.set("excluir", m.id);
+        const j = await api("GET", "api/unidades?" + q);
+        f.elements.unidades.value = decimal(+j.unidades.toFixed(8));
+        ajusta();
+      } catch (x) { alert(x.message); }
+    };
+    ajusta();
+  }
+
+  /* ---------------------------------------------- objetivo de patrimonio */
+  function formObjetivo() {
+    const o = E.cfg.objetivo || {};
+    const propio = !!(o.activo && o.importe && (o.elegido || o.importe !== 100000));
+    const f = abreModal("Mi objetivo de patrimonio", `
+      <label class="interruptor"><input type="checkbox" name="activo"><span class="pista"></span>
+        <span><b>Usar mi propio objetivo</b><small>Si lo apagas, la barra del panel va al siguiente hito:
+          10.000 €, 25.000 €, 50.000 €, 100.000 €…</small></span></label>
+      <div class="rejilla siObjetivo" style="margin-top:16px">
+        ${campo("Importe", '<div class="conSufijo"><input name="importe" inputmode="decimal" placeholder="30.000"><span>€</span></div>')}
+        ${campo("Nombre", '<input name="etiqueta" maxlength="60" placeholder="Entrada del piso">', "opcional")}
+      </div>`,
+    async f => {
+      const d = campos(f);
+      d.activo = f.elements.activo.checked;
+      const j = await api("POST", "api/objetivo", d);
+      E.cfg = j.cartera;
+      window.EDITOR_SUCIO = true;
+      return null;
+    });
+    rellena(f, { activo: propio, importe: propio ? decimal(o.importe) : "", etiqueta: propio ? o.etiqueta : "" });
+    const ajusta = () => { f.querySelector(".siObjetivo").hidden = !f.elements.activo.checked; };
+    f.elements.activo.onchange = ajusta;
+    ajusta();
+  }
+
+  /* ---------------------------------------------- traspasos */
+  // De un fondo (o plan) a otro sin vender: el coste y la antigüedad pasan al destino.
+  const PRECIOS = {};
+  async function precio(pid, f) {
+    const k = pid + f;
+    if (!(k in PRECIOS)) {
+      PRECIOS[k] = api("GET", `api/precio?producto=${encodeURIComponent(pid)}&fecha=${f}`)
+        .then(j => j.ok ? j.precio : null).catch(() => null);
+    }
+    return PRECIOS[k];
+  }
+
+  function formTraspaso(m) {
+    const traspasables = E.cfg.productos.filter(p => !soloSaldo(p));
+    if (traspasables.length < 2) { alert("Para un traspaso necesitas al menos dos productos: el de origen y el de destino. Añade el nuevo en «Productos»."); return; }
+    const nuevo = !m;
+    m = m || { fecha: hoy(), producto: E.filtro !== "todos" && prod(E.filtro) && !soloSaldo(prod(E.filtro)) ? E.filtro : traspasables[0].id };
+    if (!m.destino) m.destino = (traspasables.find(p => p.id !== m.producto) || {}).id;
+    const ops = traspasables.map(p => `<option value="${esc(p.id)}">${esc(nombre(p))}</option>`).join("");
+    const f = abreModal(nuevo ? "Traspaso entre productos" : "Editar traspaso", `
+      <div class="rejilla">
+        ${campo("Sale de", `<select name="producto">${ops}</select>`)}
+        ${campo("Va a", `<select name="destino">${ops}</select>`)}
+        ${campo("Fecha", `<input type="date" name="fecha" max="${hoy()}">`)}
+        ${campo("Importe traspasado", '<div class="conSufijo"><input name="importe" inputmode="decimal" placeholder="0,00"><span>€</span></div>', "lo que valía ese día")}
+        ${campo("Participaciones que salen", `<div class="conBoton"><input name="unidades" inputmode="decimal" placeholder="0">
+          <button type="button" class="btn" id="tTodas" title="Todas las que tenías ese día">Todas</button></div>`, "", "siUnidO")}
+        ${campo("Participaciones que entran", '<input name="unidadesDestino" inputmode="decimal" placeholder="0">', "en el destino", "siUnidD")}
+        <label class="interruptor ancho siTotal"><input type="checkbox" name="total"><span class="pista"></span>
+          <span><b>Lo traspaso todo</b><small>El producto de origen se queda a cero ese día.</small></span></label>
+        ${campo("Nota", '<input name="nota" maxlength="200" placeholder="Por ejemplo: traspaso a un indexado más barato">', "opcional", "ancho")}
+      </div>
+      <div class="resumen"><span id="tResumen"></span><b id="tPrecios"></b></div>`,
+    async f => {
+      const d = { ...campos(f), tipo: "traspaso", total: f.elements.total.checked };
+      if (!nuevo) d.id = m.id;
+      await guarda("movimientos", d);
+      E.vista = "movimientos";
+      recuerda.guarda("patrimonio.editor", "movimientos");
+      return null;
+    }, nuevo ? "Guardar traspaso" : "Guardar cambios");
+    rellena(f, { ...m, unidades: decimal(m.unidades || ""), unidadesDestino: decimal(m.unidadesDestino || ""),
+      importe: decimal(m.importe), total: !!m.total });
+
+    // Lo que no ha tocado el usuario se rellena solo con el precio de ese día.
+    const tocado = { importe: !nuevo, unidadesDestino: !nuevo };
+    ["importe", "unidadesDestino"].forEach(k => f.elements[k].addEventListener("input", () => { tocado[k] = true; }));
+    const ajusta = async () => {
+      const o = prod(f.elements.producto.value), dd = prod(f.elements.destino.value), fe = f.elements.fecha.value || hoy();
+      f.querySelector(".siUnidO").hidden = manual(o);
+      f.querySelector(".siUnidD").hidden = manual(dd);
+      f.querySelector(".siTotal").hidden = !manual(o);
+      const yaImportado = dd && E.cfg.movimientos.some(x => x.producto === dd.id && x.tipo === "compra"
+        && /MyInvestor · traspaso/.test(x.nota || ""));
+      $("#tResumen").innerHTML = (o && dd && o.id !== dd.id
+        ? `No es una venta: lo que llevabas metido en «${esc(nombre(o))}» y la fecha de cada compra pasan a «${esc(nombre(dd))}». Hacienda no cobra nada hasta que vendas.`
+        : "Elige dos productos distintos.") + (yaImportado
+        ? `<span class="alerta">Ojo: «${esc(nombre(dd))}» ya trae lotes de un traspaso importados de MyInvestor. Si es este mismo traspaso, no lo anotes otra vez: vuelve a importar su CSV y, en la vista previa, di de qué fondo venía.</span>` : "");
+      const pedido = [o && o.id, dd && dd.id, fe, f.elements.unidades.value, f.elements.importe.value].join("|");
+      f.dataset.pedido = pedido;
+      const [po, pd] = await Promise.all([o && !manual(o) ? precio(o.id, fe) : null, dd && !manual(dd) ? precio(dd.id, fe) : null]);
+      if (f.dataset.pedido !== pedido) return;
+      const u = leeNum(f.elements.unidades.value);
+      if (!tocado.importe && po && u > 0) f.elements.importe.value = decimal((u * po).toFixed(2));
+      const imp = leeNum(f.elements.importe.value);
+      if (!tocado.unidadesDestino && pd && imp > 0) f.elements.unidadesDestino.value = decimal(+(imp / pd).toFixed(6));
+      $("#tPrecios").textContent = [po && `${num(po)} €`, pd && `${num(pd)} €`].filter(Boolean).join(" → ");
+    };
+    f.oninput = ajusta;
+    f.onchange = ajusta;
+    $("#tTodas").onclick = async () => {
+      try {
+        const q = new URLSearchParams({ producto: f.elements.producto.value, fecha: f.elements.fecha.value || hoy() });
+        if (!nuevo) q.set("excluir", m.id);
+        const j = await api("GET", "api/unidades?" + q);
+        f.elements.unidades.value = decimal(+j.unidades.toFixed(8));
+        ajusta();
+      } catch (x) { alert(x.message); }
+    };
+    ajusta();
+  }
+
+  /* ---------------------------------------------- cuadrar participaciones */
+  // Si tu banco dice que tienes otras participaciones (pasa con traspasos importados de
+  // MyInvestor), se fija la cifra buena sin tocar lo que pagaste.
+  function formAjuste(m) {
+    const cotizan = E.cfg.productos.filter(p => !manual(p));
+    if (!cotizan.length) { alert("Ningún producto con precio en internet: no hay participaciones que cuadrar."); return; }
+    const nuevo = !m;
+    m = m || { fecha: hoy(), producto: E.filtro !== "todos" && cotizan.some(p => p.id === E.filtro) ? E.filtro : cotizan[0].id };
+    const f = abreModal("Cuadrar participaciones con tu banco", `
+      <p>Si las participaciones de un fondo no coinciden con las que ves en tu banco (pasa, por ejemplo, con algunos
+        traspasos importados de MyInvestor), escribe aquí las buenas. Lo que pagaste no cambia: solo cuántas tienes.</p>
+      <div class="rejilla" style="margin-top:14px">
+        ${campo("Producto", `<select name="producto">${cotizan.map(p => `<option value="${esc(p.id)}">${esc(nombre(p))}</option>`).join("")}</select>`, "", "ancho")}
+        ${campo("Fecha", `<input type="date" name="fecha" max="${hoy()}">`, "la del dato de tu banco")}
+        ${campo("Participaciones según tu banco", '<input name="unidades" inputmode="decimal" placeholder="0">')}
+      </div>
+      <div class="resumen"><span id="aResumen">Calculando…</span></div>`,
+    async f => {
+      const d = { ...campos(f), tipo: "ajuste" };
+      if (!nuevo) d.id = m.id;
+      await guarda("movimientos", d);
+      E.vista = "movimientos";
+      return null;
+    }, nuevo ? "Cuadrar" : "Guardar cambios");
+    rellena(f, { ...m, unidades: decimal(m.unidades || "") });
+    const ajusta = async () => {
+      const q = new URLSearchParams({ producto: f.elements.producto.value, fecha: f.elements.fecha.value || hoy() });
+      if (!nuevo) q.set("excluir", m.id);
+      try {
+        const j = await api("GET", "api/unidades?" + q);
+        const real = leeNum(f.elements.unidades.value);
+        $("#aResumen").innerHTML = `Rumbo calcula <b>${num(j.unidades, 6)}</b> participaciones ese día.` +
+          (real >= 0 && !isNaN(real) ? ` Con tu cifra, ${real >= j.unidades ? "+" : "−"}${num(Math.abs(real - j.unidades), 6)}.` : "");
+      } catch (x) { $("#aResumen").textContent = x.message; }
     };
     f.oninput = ajusta;
     f.onchange = ajusta;
     ajusta();
   }
 
+  /* ---------------------------------------------- fondo de emergencia */
+  function formColchon() {
+    const c = E.cfg.colchon || { modo: "meses", meses: 6 };
+    const f = abreModal("Mi fondo de emergencia", `
+      <p>Lo que quieres tener siempre a mano por si pasa algo (una avería, quedarte sin trabajo…). Lo habitual es entre
+        3 y 6 meses de gastos. Rumbo lo compara con tu liquidez y te dice cuánto te sobra para invertir.</p>
+      <div class="pildoras" style="grid-template-columns:repeat(2,1fr);margin-top:12px">
+        <label><input type="radio" name="modo" value="meses"><span>En meses de gastos</span></label>
+        <label><input type="radio" name="modo" value="importe"><span>Un importe fijo</span></label></div>
+      <div class="rejilla siMeses" style="margin-top:16px">
+        ${campo("Meses", '<input name="meses" inputmode="decimal" placeholder="6">')}
+        ${campo("Lo que gastas al mes", '<div class="conSufijo"><input name="gastoMensual" inputmode="decimal" placeholder="2.000"><span>€</span></div>')}
+      </div>
+      <div class="rejilla siImporte" style="margin-top:16px">
+        ${campo("Importe", '<div class="conSufijo"><input name="importe" inputmode="decimal" placeholder="12.000"><span>€</span></div>')}
+      </div>
+      <div class="resumen"><span id="cResumen"></span></div>
+      ${E.cfg.colchon ? '<p class="ayuda"><button type="button" class="btn" id="cBorrar">Quitar mi fondo de emergencia</button></p>' : ""}`,
+    async f => {
+      const j = await api("POST", "api/colchon", campos(f));
+      E.cfg = j.cartera;
+      window.EDITOR_SUCIO = true;
+      return () => { recuerda.guarda("patrimonio.tab", "patrimonio"); location.reload(); };
+    });
+    rellena(f, { modo: c.modo, meses: decimal(c.meses), gastoMensual: decimal(c.gastoMensual), importe: decimal(c.importe) });
+    const ajusta = () => {
+      const m = f.elements.modo.value;
+      f.querySelector(".siMeses").hidden = m !== "meses";
+      f.querySelector(".siImporte").hidden = m !== "importe";
+      const total = m === "meses" ? leeNum(f.elements.meses.value) * leeNum(f.elements.gastoMensual.value) : leeNum(f.elements.importe.value);
+      $("#cResumen").textContent = total > 0 ? `Tu fondo de emergencia: ${eur(total)}.` : "Rellena las cifras.";
+    };
+    f.oninput = ajusta;
+    f.onchange = ajusta;
+    ajusta();
+    const borrar = $("#cBorrar");
+    if (borrar) borrar.onclick = async () => {
+      if (!confirm("¿Quitar tu fondo de emergencia?")) return;
+      try { await api("POST", "api/colchon", { borrar: true }); recuerda.guarda("patrimonio.tab", "patrimonio"); location.reload(); }
+      catch (x) { alert(x.message); }
+    };
+  }
+
+  /* ---------------------------------------------- reparto objetivo */
+  // En la cartera de ejemplo el reparto se puede probar: se ve al momento, pero no se guarda.
+  function pruebaDemo(d, pesos, conEfectivo, cuenta) {
+    const n = {};
+    Object.entries(pesos).forEach(([k, v]) => { const x = leeNum(v); if (x > 0) n[k] = x; });
+    const total = Object.values(n).reduce((a, b) => a + b, 0);
+    if (!Object.keys(n).length) throw new Error("Pon el % que quieres en al menos un grupo.");
+    if (Math.abs(total - 100) > 0.5) throw new Error(`Los porcentajes suman ${num(total, 2)} %: tienen que sumar 100 %.`);
+    const vigilar = leeNum(d.vigilar) || 3, rebalancear = leeNum(d.rebalancear) || 5;
+    if (rebalancear < vigilar) throw new Error("El margen para rebalancear tiene que ser mayor que el de vigilar.");
+    return aplicaDemo({ por: d.por === "producto" ? "producto" : "clase", pesos: n, vigilar, rebalancear, conEfectivo, cuenta });
+  }
+  function aplicaDemo(o) {
+    E.cfg.objetivoReparto = o;
+    if (D) D.objetivoReparto = o;
+    return () => document.dispatchEvent(new Event("rumbo:editor"));
+  }
+
+  function formReparto() {
+    const demo = E.modo === "demo";
+    const o = window.Calculos.normalizaReparto(E.cfg.objetivoReparto) || { por: "clase", pesos: {}, vigilar: 3, rebalancear: 5 };
+    const datos = (D && D.productos ? D.productos.concat(D.otrosActivos || []) : []);
+    // Cada grupo con lo que tiene dentro, para que se entienda qué es cada uno.
+    const grupos = por => {
+      const m = new Map();
+      datos.filter(p => p.valor > 0 && p.tipoClave !== "deuda").forEach(p => {
+        const k = por === "producto" ? (p.corto || p.nombre) : window.Calculos.tipoReparto(p);
+        m.set(k, (m.get(k) || []).concat(p));
+      });
+      Object.keys(o.por === por ? o.pesos : {}).forEach(k => { if (!m.has(k)) m.set(k, []); });
+      const orden = por === "producto" ? [] : window.Calculos.TIPOS_REPARTO;
+      return [...m.entries()].sort((a, b) => (orden.indexOf(a[0]) + 1 || 99) - (orden.indexOf(b[0]) + 1 || 99))
+        .map(([nombre, de]) => ({ nombre, de }));
+    };
+    const f = abreModal("Mi reparto objetivo", `
+      <p>¿Qué parte de tu dinero quieres en cada sitio? Rumbo compara con lo que tienes y te dice dónde meter
+        la próxima aportación para volver a cuadrar, sin vender nada.</p>
+      <div class="pildoras" style="grid-template-columns:repeat(2,1fr);margin-top:12px">
+        <label><input type="radio" name="por" value="clase"><span>Por tipo de activo</span></label>
+        <label><input type="radio" name="por" value="producto"><span>Por producto</span></label></div>
+      <p class="ayuda" id="repQueEs"></p>
+      <div class="listaValores" id="repGrupos"></div>
+      <div class="resumen"><span>Tienen que sumar 100 %. Las cuentas solo cuentan si les pones un %.</span><b class="sumaRep" id="repSuma"></b></div>
+      <p class="ayuda">Con el interruptor de cada producto decides si cuenta para este reparto (por ejemplo, deja fuera
+        el plan de pensiones o mete una cuenta). Solo cambia el reparto: sigue en tu patrimonio, tus gráficas y tus totales.</p>
+      <details class="avanzado"><summary>Márgenes y efectivo</summary>
+        <div class="rejilla">
+          ${campo("OK hasta", '<div class="conSufijo"><input name="vigilar" inputmode="decimal"><span>pts</span></div>', "de desviación")}
+          ${campo("Rebalancear desde", '<div class="conSufijo"><input name="rebalancear" inputmode="decimal"><span>pts</span></div>')}
+          <label class="interruptor ancho"><input type="checkbox" name="conEfectivo"><span class="pista"></span>
+            <span><b>Contarlo todo</b><small>También las cuentas y lo que no es a largo plazo, aunque no les pongas %.</small></span></label>
+        </div></details>
+      ${E.cfg.objetivoReparto ? '<p class="ayuda"><button type="button" class="btn" id="repBorrar">Quitar mi reparto objetivo</button></p>' : ""}
+      ${demo ? '<p class="ayuda">Es la cartera de ejemplo: el cambio se ve al momento, pero no se guarda.</p>' : ""}`,
+    async f => {
+      const d = campos(f);
+      const pesos = {};
+      Object.keys(d).filter(k => k.startsWith("g_")).forEach(k => { if (String(d[k]).trim()) pesos[f.elements[k].dataset.grupo] = d[k]; });
+      const cuenta = eleccionCuenta();
+      if (demo) return pruebaDemo(d, pesos, f.elements.conEfectivo.checked, cuenta);
+      const j = await api("POST", "api/reparto", { por: d.por, pesos, vigilar: d.vigilar, rebalancear: d.rebalancear,
+        conEfectivo: f.elements.conEfectivo.checked, cuenta });
+      E.cfg = j.cartera;
+      window.EDITOR_SUCIO = true;
+      return () => { recuerda.guarda("patrimonio.tab", "patrimonio"); location.reload(); };
+    });
+    rellena(f, { por: o.por, vigilar: decimal(o.vigilar), rebalancear: decimal(o.rebalancear), conEfectivo: !!o.conEfectivo });
+
+    // Qué productos cuentan: cada interruptor sigue la regla general hasta que lo tocas; lo que eliges a mano manda.
+    const Cal = window.Calculos;
+    const candidatos = datos.filter(p => p.valor > 0 && p.tipoClave !== "deuda" && p.id != null);
+    const porId = Object.fromEntries(candidatos.map(p => [String(p.id), p]));
+    const borrador = () => {
+      const pesos = {};
+      f.querySelectorAll("[data-grupo]").forEach(i => { const x = leeNum(i.value); if (x > 0) pesos[i.dataset.grupo] = x; });
+      return { por: f.elements.por.value, pesos, conEfectivo: f.elements.conEfectivo.checked };
+    };
+    const elegidos = { ...(o.cuenta || {}) };
+    const eleccionCuenta = () => {
+      const b = borrador(), out = {};
+      candidatos.forEach(p => {
+        if (Object.prototype.hasOwnProperty.call(elegidos, p.id) && elegidos[p.id] !== Cal.cuentaPorDefecto(p, b)) out[p.id] = elegidos[p.id];
+      });
+      return out;
+    };
+    const interruptor = (p, conNombre) => `<label class="onoff" title="Cuenta para este reparto"><input type="checkbox" data-prod="${esc(p.id)}">
+      <span class="pista"></span>${conNombre ? `<span class="nmP">${esc(p.corto || p.nombre)}</span>` : '<span class="est"></span>'}</label>`;
+    const actualizaInterruptores = () => {
+      const b = { ...borrador(), cuenta: elegidos };
+      f.querySelectorAll("[data-prod]").forEach(c => {
+        const p = porId[c.dataset.prod];
+        if (!p) return;
+        c.checked = Cal.cuentaEnReparto(p, b);
+        c.closest(".onoff").classList.toggle("fuera", !c.checked);
+        const fila = c.closest(".filaRep");
+        if (fila && b.por === "producto") fila.classList.toggle("apagado", !c.checked);
+      });
+    };
+    const pintaGrupos = () => {
+      const por = f.elements.por.value;
+      $("#repQueEs").textContent = por === "producto"
+        ? "Cada fondo, acción o cuenta por separado: por ejemplo, 80 % al fondo del mundo y 20 % al de emergentes."
+        : "Grupos grandes: toda la bolsa junta, la renta fija, el monetario… Para repartir entre fondos concretos, elige «Por producto».";
+      $("#repGrupos").innerHTML = grupos(por).map((g, i) => `<div class="filaValor filaRep"><span class="nm">${esc(g.nombre)}${
+          por === "producto"
+            ? (g.de[0] && g.de[0].id != null ? `<span class="onoffs">${interruptor(g.de[0], false)}</span>` : "")
+            : (g.de.length ? `<span class="onoffs">${g.de.filter(p => p.id != null).map(p => interruptor(p, true)).join("")}</span>` : "")}</span>
+        <span class="conSufijo"><input name="g_${i}" data-grupo="${esc(g.nombre)}" inputmode="decimal" placeholder="0"
+          value="${o.por === por && o.pesos[g.nombre] != null ? decimal(o.pesos[g.nombre]) : ""}"><span>%</span></span></div>`).join("")
+        || '<p class="subt">Primero añade productos con valor.</p>';
+      actualizaInterruptores();
+      suma();
+    };
+    $("#repGrupos").onchange = e => {
+      const c = e.target.closest("[data-prod]");
+      if (!c) return;
+      elegidos[c.dataset.prod] = c.checked;
+      actualizaInterruptores();
+    };
+    const suma = () => {
+      const t = [...f.querySelectorAll("[data-grupo]")].reduce((a, i) => a + (leeNum(i.value) || 0), 0);
+      const el = $("#repSuma");
+      el.textContent = `Suma: ${num(t, 2)} %`;
+      el.classList.toggle("mal", Math.abs(t - 100) > 0.5);
+    };
+    f.querySelectorAll('[name="por"]').forEach(r => { r.onchange = pintaGrupos; });
+    f.oninput = e => { suma(); if (!e.target.closest("[data-prod]")) actualizaInterruptores(); };
+    pintaGrupos();
+    const borrar = $("#repBorrar");
+    if (borrar) borrar.onclick = async () => {
+      if (!confirm("¿Quitar tu reparto objetivo?")) return;
+      if (demo) { $("#modal").close(); aplicaDemo(null)(); return; }
+      try { await api("POST", "api/reparto", { borrar: true }); recuerda.guarda("patrimonio.tab", "patrimonio"); location.reload(); }
+      catch (x) { alert(x.message); }
+    };
+  }
+
   async function borrarMov(id) {
     const m = E.cfg.movimientos.find(x => x.id === id);
-    if (!confirm(`¿Borrar ${(E.tiposMov[m.tipo] || "").toLowerCase()} de ${eur(m.importe)} del ${fecha(m.fecha)} en «${nombre(prod(m.producto))}»?`)) return;
+    const donde = m.tipo === "traspaso" ? `de «${nombre(prod(m.producto))}» a «${nombre(prod(m.destino))}»` : `en «${nombre(prod(m.producto))}»`;
+    if (!confirm(`¿Borrar ${(E.tiposMov[m.tipo] || "").toLowerCase()} de ${eur(m.importe)} del ${fecha(m.fecha)} ${donde}?`)) return;
     try { await borra("movimientos", id); pinta(); } catch (x) { alert(x.message); }
   }
 
@@ -473,6 +975,9 @@
           <button data-acc="borrarValor" data-id="${esc(v.id)}">Borrar</button></td></tr>`).join("");
       return `<section class="tarjeta saldo"><header><h2><i class="pt" style="background:var(--s${p.slot || 1})"></i>${esc(nombre(p))}</h2>
           <span class="subt">${esc(E.tipos[p.tipo] || "")}${p.entidad ? " · " + esc(p.entidad) : ""}</span><span class="sp"></span>
+          ${p.tipo === "efectivo" || p.tipo === "p2p" ? `<button class="btn" data-acc="nuevoInteres" data-id="${esc(p.id)}" title="Intereses que te han pagado">+ Intereses</button>` : ""}
+          ${p.tipo === "inmueble" ? `<button class="btn" data-acc="nuevoInteres" data-id="${esc(p.id)}" title="Lo que te ha pagado el inquilino">+ Alquiler</button>
+            <button class="btn" data-acc="nuevoGasto" data-id="${esc(p.id)}" title="Comunidad, IBI, seguro, reparaciones…">+ Gasto</button>` : ""}
           <button class="btn" data-acc="nuevoValor" data-id="${esc(p.id)}">+ Anotar</button></header>
         ${filas ? `<div class="tablaEnv"><table class="dt"><thead><tr><th>Fecha</th><th>${etiquetaValor(p)}</th>
           ${conAportado ? "<th>Aportado</th>" : ""}<th></th></tr></thead><tbody>${filas}</tbody></table></div>`
@@ -542,7 +1047,7 @@
   }
 
   /* ---------------------------------------------- importar */
-  const IMP = { origen: "myinvestor", informe: null, token: null, hecho: null, prompt: null, archivos: [] };
+  const IMP = { origen: "myinvestor", informe: null, token: null, hecho: null, prompt: null, archivos: [], respuestas: {} };
   const ICONOS = {
     myinvestor: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V10l7-5 7 5v11M9 21v-6h6v6"/></svg>',
     plantilla: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>',
@@ -595,6 +1100,8 @@
         ${op("plantilla", "Plantilla", "Excel o CSV, para cualquier banco")}
         ${op("ia", "Con ayuda de una IA", "Convierte el extracto de tu banco")}
       </div>
+      <p class="ayuda" style="margin-top:14px">¿Tu banco o bróker no está (Trade Republic, Bankinter, Indexa…)?
+        Usa la plantilla o la opción «Con ayuda de una IA».</p>
       <div class="imPaso">${paso}
         <div class="imErr" id="imFallo" hidden></div>
         <div class="imAcc"><span class="sp"></span>
@@ -637,7 +1144,7 @@
     b.disabled = true;
     b.textContent = "Revisando y buscando precios…";
     try {
-      const r = await fetch("api/importar/previsualizar", { method: "POST", body: fd });
+      const r = await fetch("api/importar/previsualizar", { method: "POST", body: fd, headers: cabeceraPerfil() });
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.ok) throw new Error((j.errores || ["Algo ha fallado al leerlo."]).join("\n"));
       IMP.informe = j.informe;
@@ -663,6 +1170,37 @@
       ${inf.productosNuevos.map(p => `<div class="imProd"><b>${esc(p.nombre)}</b>
         <span class="meta"><span>${esc(E.tipos[p.tipo] || p.tipo)}</span><span>${esc(p.codigo || "valor a mano")}</span>
         <span>${esc(E.fuentes[p.fuente])}</span>${p.precio ? `<span>${num(p.precio)} ${esc(p.monedaPrecio)} · ${fecha(p.fechaPrecio)}</span>` : ""}</span></div>`).join("")}</div>` : "";
+    const traspasos = (inf.traspasosMyInvestor || []).map((t, i) => {
+      const r = t.respuesta || t.sugerencia || {};
+      const origen = r.origen || "ninguno";
+      const lotes = (t.detalle && t.detalle.length) ? t.detalle : [[null, t.coste]];
+      const fechaDe = k => (r.fechas && r.fechas[k] != null) ? r.fechas[k] : (r.fecha || "");
+      const sinFecha = origen !== "ninguno" && lotes.some((l, k) => !fechaDe(k));
+      const estado = t.hecho
+        ? `<p class="relleno">✓ Se creará un traspaso desde «${esc((t.origenes.find(o => o.id === origen) || {}).nombre || origen)}»: no contará dos veces ni como venta.</p>`
+        : t.error ? `<div class="imErr">${esc(t.error)}</div>`
+        : sinFecha ? `<div class="imErr">Falta la fecha del traspaso. Sin ella no se puede crear: ponla para seguir.</div>` : "";
+      return `<div class="bloque traspasoMI" style="margin-top:12px" data-ref="${esc(t.ref)}">
+        <b>«${esc(t.nombre)}»: ${t.lotes} ${t.lotes === 1 ? "lote viene" : "lotes vienen"} de un traspaso</b>
+        <p class="ayuda">${eur(t.coste)} de coste, ≈ ${num(t.unidades, 4)} participaciones. MyInvestor no dice de qué fondo
+          venían. Si ese fondo está en Rumbo, elígelo y pon la fecha del traspaso: Rumbo hará un traspaso de verdad, el dinero
+          no contará dos veces y verás cómo salió de él, aunque su extracto ya no traiga lo que se traspasó.</p>
+        <div class="rejilla" style="margin-top:10px">
+          ${campo("Venía de", `<select name="tmi_origen_${i}" data-i="${i}"><option value="ninguno">No está en Rumbo: importar como compras</option>
+            ${t.origenes.map(o => `<option value="${esc(o.id)}"${o.id === origen ? " selected" : ""}>${esc(o.nombre)}</option>`).join("")}</select>`)}
+        </div>
+        <div class="lotesTraspaso">${lotes.map((l, k) => {
+          const f = fechaDe(k), estimar = f === "estimar";
+          return `<div class="loteTraspaso">
+            <span class="loteEtq">${lotes.length > 1 ? `Lote ${k + 1}: ` : ""}${eur(l[1])}${l[0] ? ` · comprado el ${fecha(l[0])}` : ""}</span>
+            <label class="campo"><span>Fecha del traspaso</span>
+              <input type="date" name="tmi_fecha_${i}_${k}" max="${hoy()}" value="${estimar ? "" : esc(f)}"${estimar ? " disabled" : ""}></label>
+            <label class="noSe"><input type="checkbox" name="tmi_estimar_${i}_${k}"${estimar ? " checked" : ""}> No la sé: que Rumbo la estime</label>
+          </div>`;
+        }).join("")}
+          <p class="ayuda">La fecha está en el historial de órdenes de MyInvestor. Si no la encuentras, Rumbo la estima con los
+            precios de los dos fondos y la marca como estimada.</p></div>${estado}${t.aviso ? `<div class="comprueba">${esc(t.aviso)}</div>` : ""}</div>`;
+    }).join("");
     const ESTADO = { nuevo: "Nuevo", repetido: "Ya estaba", error: "Con error" };
     const filas = inf.filas.map(f => `<tr class="est-${f.estado}"><td>${fecha(f.fecha)}</td>
       <td style="text-align:left">${esc(f.productoNombre)}</td><td style="text-align:left">${esc(E.tiposMov[f.tipo] || "Saldo")}</td>
@@ -681,7 +1219,7 @@
       </div>
       <div class="comprueba"><b>Compara estas cifras con tu banco antes de confirmar.</b>
         ${IMP.origen === "ia" ? "Una IA puede equivocarse al copiar números o saltarse alguna fila: revisa sobre todo el total invertido." : ""}</div>
-      ${avisos}${errores}${nuevos}
+      ${avisos}${errores}${traspasos ? `<div class="imNuevos"><div class="secc">Traspasos</div>${traspasos}</div>` : ""}${nuevos}
       ${filas ? `<div class="tablaEnv alto" style="margin-top:16px"><table class="dt"><thead><tr><th>Fecha</th>
         <th style="text-align:left">Producto</th><th style="text-align:left">Tipo</th><th>Unidades</th><th>Importe</th>
         <th style="text-align:left"></th><th>Estado</th></tr></thead><tbody>${filas}</tbody></table></div>` : ""}
@@ -690,18 +1228,53 @@
           ${n ? `Importar ${n} ${n === 1 ? "dato" : "datos"}` : "No hay nada nuevo que importar"}</button></div></section>`;
   }
 
+  function leeRespuestas() {
+    const inf = IMP.informe;
+    const out = {};
+    (inf && inf.traspasosMyInvestor || []).forEach((t, i) => {
+      const o = document.querySelector(`[name="tmi_origen_${i}"]`);
+      if (!o) return;
+      const n = (t.detalle && t.detalle.length) || 1, fechas = [];
+      for (let k = 0; k < n; k++) {
+        const est = document.querySelector(`[name="tmi_estimar_${i}_${k}"]`), f = document.querySelector(`[name="tmi_fecha_${i}_${k}"]`);
+        fechas.push(est && est.checked ? "estimar" : (f ? f.value : ""));
+      }
+      out[t.ref] = { origen: o.value, fechas, fecha: fechas[0] };
+    });
+    return out;
+  }
+  async function imRevisarTraspasos() {
+    const respuestas = leeRespuestas();
+    try {
+      const j = await api("POST", "api/importar/revisar", { token: IMP.token, respuestas });
+      IMP.informe = j.informe;
+      IMP.respuestas = respuestas;
+      pinta();
+    } catch (x) { alert(x.message); }
+  }
+  document.addEventListener("change", e => {
+    if (e.target.closest && e.target.closest(".traspasoMI") && E.vista === "importar" && IMP.informe) imRevisarTraspasos();
+  });
+
   async function imConfirmar() {
     const b = $("#imConfirmarBtn");
+    const faltan = Object.values(leeRespuestas()).filter(r => r.origen && r.origen !== "ninguno" && r.fechas.some(f => !f)).length;
+    if (faltan) {
+      alert(faltan === 1 ? "Falta la fecha de un traspaso. Ponla, o elige «No está en Rumbo», antes de importar."
+        : `Faltan las fechas de ${faltan} traspasos. Ponlas, o elige «No está en Rumbo», antes de importar.`);
+      return;
+    }
     b.disabled = true;
     b.textContent = "Importando…";
     try {
-      const j = await api("POST", "api/importar/confirmar", { token: IMP.token });
+      const j = await api("POST", "api/importar/confirmar", { token: IMP.token, respuestas: leeRespuestas() });
       E.cfg = j.cartera;
       window.EDITOR_SUCIO = true;
       const i = j.informe;
       const pl = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
       IMP.hecho = "Importado: " + [i.añadidos && pl(i.añadidos, "movimiento", "movimientos"),
         i.saldos && pl(i.saldos, "saldo", "saldos")].filter(Boolean).join(" y ") +
+        ((n => n ? ` (${pl(n, "traspaso", "traspasos")} desde otro fondo)` : "")((i.traspasosMyInvestor || []).filter(t => t.hecho).length)) +
         (i.repetidos ? `. ${pl(i.repetidos, "ya estaba y se ha omitido", "ya estaban y se han omitido")}` : "") + ".";
       IMP.informe = null;
       IMP.token = null;
@@ -711,6 +1284,72 @@
       alert(x.message);
       b.disabled = false;
     }
+  }
+
+  /* ---------------------------------------------- aportaciones periódicas */
+  const pendientesPeriodicas = () => window.Calculos && E.cfg
+    ? window.Calculos.periodicasPendientes(E.cfg.periodicas, E.cfg.productos.map(p => p.id), hoy()) : [];
+
+  function avisoPeriodicas() {
+    return pendientesPeriodicas().map(x => {
+      const clave = esc(x.producto + "|" + x.dia);
+      return `<div class="av"><span>↻</span><span>Aportación periódica de ${eur(x.importe)} a ${esc(nombre(prod(x.producto)))}
+        (día ${x.dia}): ${x.cuantas === 1 ? `toca anotar la del ${fecha(x.desde)}` : `faltan ${x.cuantas}, desde el ${fecha(x.desde)}`}.
+        <button class="btn" data-acc="periodicaPendiente" data-id="${clave}" style="margin-left:6px">Revisar y añadir</button>
+        <button class="btn" data-acc="periodicaOlvidar" data-id="${clave}">No me lo recuerdes</button></span></div>`;
+    }).join("");
+  }
+
+  function formPeriodica(pre) {
+    const lista = E.cfg.productos.filter(p => !soloSaldo(p));
+    if (!lista.length) { alert("Primero añade un producto en «Productos»."); return; }
+    const filtro = prod(E.filtro);
+    const d = pre || { producto: filtro && !soloSaldo(filtro) ? filtro.id : lista[0].id, dia: 1, hasta: hoy() };
+    const f = abreModal("Aportación periódica", `
+      <p>¿Aportas lo mismo cada mes a un fondo, un ETF o un plan? Dile a Rumbo cuánto, qué día y desde cuándo, y prepara
+        una compra por mes con el precio de cierre de ese día.</p>
+      <div class="rejilla">
+        ${campo("Producto", `<select name="producto">${lista.map(p =>
+          `<option value="${esc(p.id)}">${esc(nombre(p))}</option>`).join("")}</select>`, "", "ancho")}
+        ${campo("Cuánto cada mes", '<div class="conSufijo"><input name="importe" inputmode="decimal" placeholder="200,00"><span>€</span></div>')}
+        ${campo("Qué día del mes", '<input name="dia" inputmode="numeric" placeholder="1">', "si ese día no hay cierre, el anterior")}
+        ${campo("Desde", `<input type="date" name="desde" max="${hoy()}">`)}
+        ${campo("Hasta", `<input type="date" name="hasta" max="${hoy()}">`)}
+      </div>
+      <p class="ayuda">Son <b>estimadas</b>: tu banco puede ejecutarlas otro día o a otro precio. Antes de guardar verás la
+        lista; después puedes corregir cada una con lo que diga tu banco. Las que ya tengas anotadas se saltan.</p>`,
+    async f => {
+      const datos = campos(f);
+      const j = await api("POST", "api/periodicas/ver", datos);
+      return () => revisaPeriodica(datos, j.plan);
+    }, "Ver las aportaciones");
+    rellena(f, { ...d, importe: d.importe != null ? decimal(d.importe) : "" });
+  }
+
+  function revisaPeriodica(datos, pl) {
+    const etq = { nueva: "Se añade", repetida: "Ya la tienes", sinPrecio: "Sin precio ese día" };
+    const filas = pl.lineas.map(x => `<tr${x.estado === "nueva" ? "" : ' class="subt"'}><td>${fecha(x.fecha)}</td>
+      <td>${eur(x.importe)}</td><td>${x.precio ? num(x.precio) + " €" : "—"}</td>
+      <td>${x.unidades ? num(x.unidades) : "—"}</td><td style="text-align:left">${etq[x.estado]}</td></tr>`).join("");
+    const n = pl.nuevas;
+    const f = abreModal("Revisa las aportaciones", `
+      <p><b>${esc(pl.nombre)}</b>: ${pl.lineas.length} ${pl.lineas.length === 1 ? "aportación" : "aportaciones"} de
+        ${eur(pl.importe)}, el día ${pl.dia} de cada mes. Se ${n === 1 ? "añade" : "añaden"} <b>${n}</b>${n < pl.lineas.length ? "; el resto se salta" : ""}.</p>
+      <div class="tablaEnv alto"><table class="dt"><thead><tr><th>Fecha</th><th>Importe</th><th>Precio de cierre</th>
+        <th>Participaciones</th><th></th></tr></thead><tbody>${filas}</tbody></table></div>
+      <p class="ayuda">Cada una se guarda como una compra con la nota «Aportación periódica (estimada…)». Rumbo se acuerda de
+        esta aportación y, cuando toque la siguiente, te avisará aquí, en Movimientos.</p>`,
+    async () => {
+      const j = await api("POST", "api/periodicas/crear", datos);
+      E.cfg = j.cartera;
+      COP.lista = null;
+      window.EDITOR_SUCIO = true;
+      avisa(j.avisos);
+      E.vista = "movimientos";
+      recuerda.guarda("patrimonio.editor", "movimientos");
+      return null;
+    }, n ? `Añadir ${n} ${n === 1 ? "aportación" : "aportaciones"}` : "Nada que añadir");
+    if (!n) f.querySelector("[type=submit]").disabled = true;
   }
 
   /* ---------------------------------------------- copias y web */
@@ -738,6 +1377,13 @@
           <div class="imErr" id="copFallo" hidden></div>
           <div class="imAcc"><span class="sp"></span><button class="btn prim" data-acc="subirCopia" id="copSubirBtn">Recuperar esta copia</button></div></div>
       </div></section>
+
+      <section class="tarjeta"><header><h2>Tus datos en Excel</h2>
+        <span class="subt">Para revisarlos, hacer tus propias cuentas o llevártelos a otra app.</span></header>
+      <p class="ayuda" style="margin-top:0">Un archivo <code>.xlsx</code> (se abre con Excel, Google Sheets o LibreOffice) con
+        todos tus movimientos y saldos, y una hoja con la ficha de cada producto. La hoja «Movimientos» tiene el mismo
+        formato que la plantilla de importación: puedes cambiarla y volver a importarla.</p>
+      <a class="btn prim" href="api/exportar-excel" download>Descargar en Excel</a></section>
 
       <section class="tarjeta"><header><h2>Copias automáticas</h2>
         <span class="subt">Antes de cada cambio se guarda una copia (las últimas 20). Si te equivocas, vuelve a una anterior.</span></header>
@@ -768,7 +1414,7 @@
     if (E.modo === "propio" && !confirm("Esto sustituye tu cartera actual por la de la copia. Tu cartera actual se guarda antes en «Copias automáticas». ¿Seguir?")) return;
     const fd = new FormData();
     fd.append("archivo", inp.files[0]);
-    const r = await fetch("api/copia/subir", { method: "POST", body: fd });
+    const r = await fetch("api/copia/subir", { method: "POST", body: fd, headers: cabeceraPerfil() });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !j.ok) { fallo.textContent = (j.errores || ["No he podido leer la copia."]).join("\n"); fallo.hidden = false; return; }
     recuerda.guarda("patrimonio.tab", "datos");
@@ -792,11 +1438,39 @@
     if (pie) pie.innerHTML = `Versión ${esc(v.actual)}. ¿Otra duda o un fallo? Cuéntalo en la
       <a href="${esc(v.repo)}" target="_blank" rel="noopener">página del proyecto en GitHub</a>.`;
     if (!v.hayNueva) return;
-    $("#bannerVersionTexto").innerHTML = `<b>Hay una versión nueva (${esc(v.ultima)}).</b> Descárgala en
+    $("#bannerVersionTexto").innerHTML = v.docker
+      ? `<b>Hay una versión nueva (${esc(v.ultima)}).</b> Para actualizar, en el equipo donde tienes Rumbo:
+        <code>docker compose pull &amp;&amp; docker compose up -d</code>. Tus datos se quedan donde están.`
+      : `<b>Hay una versión nueva (${esc(v.ultima)}).</b> Descárgala en
       <a href="${esc(v.repo)}" target="_blank" rel="noopener">GitHub</a> y copia tu carpeta <code>mis_datos</code> a la
       nueva: así no pierdes nada. Los pasos están en la pestaña Ayuda.`;
     $("#bannerVersion").hidden = false;
   }).catch(() => { /* sin internet: no pasa nada */ });
+
+  /* ---------------------------------------------- ventana de novedades */
+  // Una sola vez por versión: «hay una nueva» (con su vídeo) o, recién actualizada,
+  // «esto es lo nuevo de tu versión». Solo a quien ya usa Rumbo con sus datos.
+  setTimeout(() => api("GET", "api/novedades").then(n => {
+    const vista = recuerda.lee("rumbo.novedades") || "";
+    // ?novedades=1 la vuelve a enseñar aunque ya se viera, también con la cartera de ejemplo (para un vídeo).
+    const forzar = new URLSearchParams(location.search).has("novedades");
+    let caso = null, clave = "";
+    if (n.nueva) { caso = n.nueva; clave = "nueva:" + n.nueva.version + (n.nueva.video ? ":v" : ""); }
+    else if (n.tuya && (n.tuya.novedades.length || n.tuya.video) && D && (D.modo !== "demo" || forzar)) {
+      caso = n.tuya; clave = "tuya:" + n.tuya.version + (n.tuya.video ? ":v" : "");
+    }
+    if (!caso || (vista === clave && !forzar) || $("#modal").open || document.body.classList.contains("video")) return;
+    recuerda.guarda("rumbo.novedades", clave);
+    const lista = caso.novedades.length ? `<ul class="listaNovedades">${caso.novedades.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
+    const video = caso.video ? `<a class="btn prim" href="${esc(caso.video)}" target="_blank" rel="noopener">▶ Ver el vídeo de la versión</a>` : "";
+    const f = abreModal(n.nueva ? `Hay una versión nueva: ${esc(caso.titulo || caso.version)}` : `Novedades de ${esc(caso.titulo || "Rumbo " + caso.version)}`,
+      `${n.nueva ? `<p>Tienes la ${esc(n.actual)}. Esto es lo que trae la ${esc(caso.version)}:</p>` : "<p>Esto es lo que ha cambiado desde tu versión anterior:</p>"}
+       ${lista}<div class="imAcc">${video}${n.nueva ? `<a class="btn" href="${esc(n.repo)}" target="_blank" rel="noopener">Descargar en GitHub</a>` : ""}</div>
+       ${n.nueva ? (n.docker ? '<p class="ayuda">Para actualizar: <code>docker compose pull &amp;&amp; docker compose up -d</code>. Tus datos no se tocan.</p>'
+         : '<p class="ayuda">Para actualizar sin perder nada, sigue los pasos de Ayuda → «¿Cómo actualizo a una versión nueva?».</p>') : ""}`,
+      async () => null, "Entendido");
+    f.querySelector("footer [data-cerrar]").hidden = true;
+  }).catch(() => { /* sin internet: no pasa nada */ }), 2500);
 
   /* ---------------------------------------------- acciones */
   const ACC = {
@@ -807,6 +1481,27 @@
     editarProducto: soloPropio(id => formProducto(prod(id))),
     borrarProducto: soloPropio(borrarProducto),
     nuevoMov: soloPropio(() => formMovimiento(null)),
+    nuevoInteres: soloPropio(id => formMovimiento(null, id, "dividendo")),
+    nuevoGasto: soloPropio(id => formMovimiento(null, id, "comision")),
+    periodica: soloPropio(() => formPeriodica()),
+    periodicaPendiente: soloPropio(clave => {
+      const x = pendientesPeriodicas().find(r => r.producto + "|" + r.dia === clave);
+      if (x) formPeriodica({ producto: x.producto, importe: x.importe, dia: x.dia, desde: x.desde, hasta: hoy() });
+    }),
+    periodicaOlvidar: soloPropio(async clave => {
+      const x = pendientesPeriodicas().find(r => r.producto + "|" + r.dia === clave);
+      if (!x || !confirm("¿Dejo de recordarte esta aportación periódica? Las compras que ya anotaste no se tocan.")) return;
+      try {
+        const j = await api("POST", "api/periodicas/olvidar", { producto: x.producto, dia: x.dia });
+        E.cfg = j.cartera;
+        pinta();
+      } catch (e) { alert(e.message); }
+    }),
+    nuevoTraspaso: soloPropio(() => formTraspaso(null)),
+    nuevoAjuste: soloPropio(() => formAjuste(null)),
+    objetivo: soloPropio(() => formObjetivo()),
+    reparto: (...a) => (E.modo === "demo" ? formReparto() : soloPropio(() => formReparto())(...a)),
+    colchon: soloPropio(() => formColchon()),
     editarMov: soloPropio(id => formMovimiento(E.cfg.movimientos.find(m => m.id === id))),
     borrarMov: soloPropio(borrarMov),
     nuevoValor: soloPropio(id => formValor(null, id)),
@@ -844,6 +1539,18 @@
     const b = e.target.closest("[data-acc]");
     if (b && ACC[b.dataset.acc]) ACC[b.dataset.acc](b.dataset.id);
   });
+  const btnDiag = $("#btnDiagnostico");
+  if (btnDiag) btnDiag.onclick = async () => {
+    try {
+      const j = await api("GET", "api/diagnostico");
+      try { await navigator.clipboard.writeText(j.texto); } catch (e) {
+        const ta = document.createElement("textarea"); ta.value = j.texto; document.body.appendChild(ta); ta.select();
+        document.execCommand("copy"); ta.remove();
+      }
+      btnDiag.textContent = "✓ Copiado: pégalo en el issue";
+      setTimeout(() => { btnDiag.textContent = "Copiar informe para soporte"; }, 3000);
+    } catch (x) { alert(x.message); }
+  };
   const btnEmpezar = $("#btnEmpezar");
   if (btnEmpezar) btnEmpezar.onclick = empezar;
 
@@ -885,7 +1592,10 @@
     }, 6000);
   })();
 
-  window.Editor = { mostrar: pinta };
+  window.Editor = { mostrar: pinta, objetivo: () => ACC.objetivo(), reparto: () => ACC.reparto(),
+    colchon: () => ACC.colchon(), perfiles };
+  // El panel pudo pintarse antes de que llegara el editor: que vuelva a pintar sus botones de «Cambiar».
+  document.dispatchEvent(new Event("rumbo:editor"));
   carga().then(pinta).catch(x => {
     const cont = $("#editor");
     if (cont) cont.innerHTML = `<div class="av"><span>⚠</span><span>${esc(x.message)}</span></div>`;

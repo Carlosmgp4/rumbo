@@ -24,6 +24,15 @@ pausa() { echo; read -r -p "Pulsa Intro para cerrar esta ventana..." _; }
 # --- 1. uv --------------------------------------------------------------------
 if command -v uv >/dev/null 2>&1; then
   echo "Preparando la app con uv. La primera vez tarda un poco: descarga Python y lo necesario."
+  # Si no se puede crear .venv aquí (carpeta sincronizada o protegida), el entorno de
+  # Python va a tu carpeta de usuario. Tus datos siguen en mis_datos.
+  FUERA="$HOME/Library/Application Support/Rumbo/entorno"
+  if [ ! -d .venv ] && [ -f "$FUERA/pyvenv.cfg" ]; then
+    export UV_PROJECT_ENVIRONMENT="$FUERA"
+  elif ! uv run --quiet python -c "import flask" >/dev/null 2>&1; then
+    echo "No puedo instalar Python dentro de esta carpeta. Lo instalo en tu carpeta de usuario."
+    export UV_PROJECT_ENVIRONMENT="$FUERA"
+  fi
   uv run --quiet python -m app || pausa
   exit
 fi

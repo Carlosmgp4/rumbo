@@ -7,8 +7,31 @@
   const NS = "http://www.w3.org/2000/svg";
 
   /* -------------------------------------------------- formato */
-  const nfEur = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const nfEur0 = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+  // Moneda en la que se ENSEÑAN los importes. Todo se calcula en euros; para verlo en
+  // otra moneda se multiplica por el cambio de hoy al formatear.
+  // Símbolos que no se confunden entre sí (todos los pesos usan «$»).
+  const SIMBOLOS = { EUR: "€", USD: "$", GBP: "£", CHF: "CHF", MXN: "MX$", ARS: "AR$", CLP: "CLP$", COP: "COL$" };
+  const simboloMoneda = c => SIMBOLOS[c] || c;
+  const MONEDA = { codigo: "EUR", porEuro: 1, simbolo: "€" };
+  let nfEur, nfEur0;
+  function ponMoneda(codigo, porEuro) {
+    const ok = codigo && codigo !== "EUR" && porEuro > 0;
+    MONEDA.codigo = ok ? codigo : "EUR";
+    MONEDA.porEuro = ok ? porEuro : 1;
+    MONEDA.simbolo = simboloMoneda(MONEDA.codigo);
+    if (!ok) {
+      nfEur = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      nfEur0 = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+      return;
+    }
+    // Los decimales de cada moneda (el peso chileno no usa céntimos) y su símbolo detrás.
+    const dec = new Intl.NumberFormat("es-ES", { style: "currency", currency: MONEDA.codigo }).resolvedOptions().maximumFractionDigits;
+    const n = new Intl.NumberFormat("es-ES", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+    const n0 = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 });
+    nfEur = { format: v => n.format(v) + " " + MONEDA.simbolo };
+    nfEur0 = { format: v => n0.format(v) + " " + MONEDA.simbolo };
+  }
+  ponMoneda("EUR");
   const nfNum = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 2 });
   const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
@@ -19,16 +42,23 @@
   function fmtEur(v, dec) {
     if (oculto()) return "•••";
     if (v === null || v === undefined || isNaN(v)) return "—";
+    v *= MONEDA.porEuro;
     return dec === 0 ? nfEur0.format(v) : nfEur.format(v);
   }
   function fmtEurCorto(v) {
     if (oculto()) return "•••";
     if (v === null || v === undefined || isNaN(v)) return "—";
-    const a = Math.abs(v);
-    if (a >= 1e6) return (v / 1e6).toLocaleString("es-ES", { maximumFractionDigits: 2 }) + " M€";
-    if (a >= 1000) return (v / 1000).toLocaleString("es-ES", { maximumFractionDigits: 1 }) + "k €";
-    return Math.round(v) + " €";
+    v *= MONEDA.porEuro;
+    const a = Math.abs(v), s = MONEDA.simbolo;
+    if (a >= 1e9) return (v / 1e9).toLocaleString("es-ES", { maximumFractionDigits: 2 }) + " mil M" + s;
+    if (a >= 1e6) return (v / 1e6).toLocaleString("es-ES", { maximumFractionDigits: 2 }) + " M" + s;
+    if (a >= 1000) return (v / 1000).toLocaleString("es-ES", { maximumFractionDigits: 1 }) + "k " + s;
+    return Math.round(v) + " " + s;
   }
+  fmtEur.dinero = fmtEurCorto.dinero = true;
+  /** Marca un formato propio como de dinero: así el eje del gráfico se reparte en la moneda que se ve. */
+  const dinero = fn => Object.assign(fn, { dinero: true });
+  const factorEje = fY => (fY && fY.dinero ? MONEDA.porEuro : 1);
   function fmtPct(v, dec) {
     if (v === null || v === undefined || isNaN(v)) return "—";
     const d = dec === undefined ? 2 : dec;
@@ -76,15 +106,18 @@
     return getComputedStyle(document.documentElement).getPropertyValue(nombre).trim();
   }
 
-  /** Escala "bonita": devuelve {max, paso} para ~5 lineas de rejilla. */
-  function escalaBonita(max, min) {
-    min = min || 0;
+  /** Escala "bonita": devuelve {max, paso} para ~5 lineas de rejilla. Con f (el cambio de
+      la moneda que se ve), las líneas caen en cifras redondas de esa moneda. */
+  function escalaBonita(max, min, f) {
+    f = f || 1;
+    max *= f;
+    min = (min || 0) * f;
     if (max <= min) max = min + 1;
     const bruto = (max - min) / 4;
     const mag = Math.pow(10, Math.floor(Math.log10(bruto)));
     const norm = bruto / mag;
     const paso = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
-    return { max: Math.ceil(max / paso) * paso, min: Math.floor(min / paso) * paso, paso };
+    return { max: Math.ceil(max / paso) * paso / f, min: Math.floor(min / paso) * paso / f, paso: paso / f };
   }
 
   /** Indices repartidos para las etiquetas del eje X. */
@@ -148,14 +181,14 @@
     if (cfg.overlay) maxV = Math.max(maxV, ...cfg.overlay.valores.filter(v => v != null));
     // Un apilado al 100% tiene que rematar justo en 100, no en el siguiente
     // escalon "bonito".
+    const fY = cfg.formatoY || fmtEurCorto;
+    const fV = cfg.formatoValor || fmtEur;
     const esc = cfg.maxForzado
       ? { min: 0, max: cfg.maxForzado, paso: cfg.maxForzado / 4 }
-      : escalaBonita(maxV, 0);
+      : escalaBonita(maxV, 0, factorEje(fY));
 
     const x = i => P.l + (n === 1 ? iw / 2 : i * iw / (n - 1));
     const y = v => P.t + ih - ((v - esc.min) / (esc.max - esc.min)) * ih;
-    const fY = cfg.formatoY || fmtEurCorto;
-    const fV = cfg.formatoValor || fmtEur;
 
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "grafico", role: "img" });
 
@@ -262,7 +295,8 @@
       const o = cfg.overlay.valores.filter(v => v != null);
       if (o.length) { maxV = Math.max(maxV, ...o); minV = Math.min(minV, ...o); }
     }
-    const esc = escalaBonita(maxV, cfg.desdeCero === false ? minV - (maxV - minV) * 0.12 : 0);
+    const esc = escalaBonita(maxV, cfg.desdeCero === false ? minV - (maxV - minV) * 0.12 : 0,
+      factorEje(cfg.formatoY || fmtEurCorto));
     const x = i => P.l + (n === 1 ? iw / 2 : i * iw / (n - 1));
     const y = v => P.t + ih - ((v - esc.min) / (esc.max - esc.min)) * ih;
 
@@ -304,8 +338,21 @@
       svg.appendChild(t);
     }
 
-    // marcadores de aportacion
+    // marcas de un día concreto (por ejemplo, un traspaso): raya vertical y su etiqueta arriba
     const idx = {}; fechas.forEach((f, i) => idx[f] = i);
+    const enRango = f => { let i = idx[f]; if (i === undefined) i = fechas.findIndex(x => x >= f); return i < 0 ? undefined : i; };
+    // Las bolas (encima de todo, al final) se apartan un poco si caen juntas.
+    const bolas = [];
+    (cfg.marcas || []).map(m => ({ m, i: enRango(m.fecha) })).filter(o => o.i !== undefined)
+      .sort((a, b) => a.i - b.i).forEach(({ m, i }) => {
+        svg.appendChild(el("line", { x1: x(i), x2: x(i), y1: P.t + 10, y2: P.t + ih, class: "marcaTraspaso" }));
+        let cx = x(i);
+        const previa = bolas[bolas.length - 1];
+        if (previa && cx - previa.cx < 22) cx = previa.cx + 22;
+        bolas.push({ m, cx });
+      });
+
+    // marcadores de aportacion
     (cfg.eventos || []).forEach(ev => {
       const i = idx[ev.fecha];
       if (i === undefined || vals[i] == null) return;
@@ -328,10 +375,36 @@
     svg.appendChild(g);
     const captura = el("rect", { x: P.l, y: P.t, width: iw, height: ih, fill: "transparent", style: "cursor:crosshair" });
     svg.appendChild(captura);
+    const gBolas = bolas.map(({ m, cx }) => {
+      const g = el("g", { class: "marcaBola" + (m.aviso ? " aviso" : ""), tabindex: 0, role: "img", "aria-label": m.titulo || "" });
+      g.appendChild(el("circle", { cx, cy: P.t + 10, r: 10 }));
+      g.appendChild(txt(cx, P.t + 14.5, m.icono || "⇄", "marcaBolaIcono", { "text-anchor": "middle" }));
+      if (m.aviso) g.appendChild(el("circle", { cx: cx + 8, cy: P.t + 2, r: 3.5, class: "marcaBolaPunto" }));
+      svg.appendChild(g);
+      return { g, m, cx };
+    });
     cont.appendChild(svg);
 
-    const porFecha = {}; (cfg.eventos || []).forEach(e => { (porFecha[e.fecha] = porFecha[e.fecha] || []).push(e); });
+    const porFecha = {}; (cfg.eventos || []).concat(cfg.marcas || []).forEach(e => {
+      const f = idx[e.fecha] !== undefined ? e.fecha : fechas.find(x => x >= e.fecha);
+      if (f) (porFecha[f] = porFecha[f] || []).push(e);
+    });
     const tt = creaTooltip(cont);
+    gBolas.forEach(({ g, m, cx }) => {
+      const muestra = () => {
+        const r = svg.getBoundingClientRect();
+        g.classList.add("activa");
+        tt.innerHTML = m.html;
+        tt.classList.add("on", "ttMarca");
+        colocaTooltip(tt, cont, cx * (r.width / W), (P.t + 24) * (r.height / H));
+      };
+      const oculta = () => { g.classList.remove("activa"); tt.classList.remove("on", "ttMarca"); };
+      g.addEventListener("pointerenter", muestra);
+      g.addEventListener("pointerdown", muestra);
+      g.addEventListener("focus", muestra);
+      g.addEventListener("pointerleave", oculta);
+      g.addEventListener("blur", oculta);
+    });
     function mover(ev) {
       const r = svg.getBoundingClientRect();
       const px = (ev.clientX - r.left) * (W / r.width);
@@ -367,7 +440,7 @@
     if (!n || !series.length) { cont.innerHTML = '<p class="vacio">Sin aportaciones en este rango.</p>'; return; }
 
     const totales = cats.map((_, i) => series.reduce((a, s) => a + (s.valores[i] || 0), 0));
-    const esc = escalaBonita(Math.max(...totales), 0);
+    const esc = escalaBonita(Math.max(...totales), 0, MONEDA.porEuro);
     const paso = iw / n;
     const ancho = Math.max(4, Math.min(paso - 6, 46));
     const y = v => P.t + ih - (v / esc.max) * ih;
@@ -559,7 +632,7 @@
     const ancho = Math.max(8, Math.min(paso - 18, 64));
 
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "grafico" });
-    const esc = escalaBonita(max, min);
+    const esc = escalaBonita(max, min, factorEje(fY));
     for (let v = esc.min; v <= esc.max + 1e-9; v += esc.paso) {
       if (v < min || v > max) continue;
       svg.appendChild(el("line", { x1: P.l, x2: W - P.r, y1: y(v), y2: y(v), class: "rejilla" }));
@@ -608,7 +681,7 @@
       if (v < min) min = v;
     }));
     const margen = (max - min) * 0.08 || 1;
-    const esc = escalaBonita(max + margen, cfg.desdeCero ? 0 : min - margen);
+    const esc = escalaBonita(max + margen, cfg.desdeCero ? 0 : min - margen, factorEje(fY));
     const x = i => P.l + (n === 1 ? iw / 2 : i * iw / (n - 1));
     const y = v => P.t + ih - ((v - esc.min) / (esc.max - esc.min)) * ih;
 
@@ -692,7 +765,7 @@
       if (v > max) max = v;
       if (v < min) min = v;
     }));
-    const esc = escalaBonita(max, min);
+    const esc = escalaBonita(max, min, factorEje(fY));
     const y = v => P.t + ih - ((v - esc.min) / (esc.max - esc.min)) * ih;
     const paso = iw / n;
     const hueco = 3;
@@ -758,7 +831,7 @@
   }
 
   global.G = {
-    fmtEur, fmtEurCorto, fmtPct, fmtPctSigno, fmtEurSigno, fmtFecha, fmtFechaCorta, fmtMes, nfNum: nfUnidades,
+    fmtEur, fmtEurCorto, fmtPct, fmtPctSigno, fmtEurSigno, ponMoneda, moneda: MONEDA, simboloMoneda, dinero, fmtFecha, fmtFechaCorta, fmtMes, nfNum: nfUnidades,
     areaApilada, lineaConEventos, barrasApiladas, donut, mini, escalaBonita, css,
     barrasHorizontales, barrasSimples, multiLinea, barrasAgrupadas
   };

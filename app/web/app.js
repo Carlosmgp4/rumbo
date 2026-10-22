@@ -5,6 +5,7 @@
   "use strict";
 
   const D = window.DATOS;
+  const C = window.Calculos;   // las cuentas (calculos.js): aquí solo se dibujan
   const $ = s => document.querySelector(s);
   const raiz = document.documentElement;
 
@@ -17,6 +18,7 @@
   const qs = new URLSearchParams(location.search);
   if (qs.get("tab")) recuerda.guarda("patrimonio.tab", qs.get("tab"));
   if (qs.get("tema")) recuerda.guarda("patrimonio.tema", qs.get("tema"));
+  if (qs.get("moneda")) recuerda.guarda("patrimonio.moneda", qs.get("moneda").toUpperCase());
 
   // El tema (claro u oscuro) se aplica siempre, también con la cartera vacía.
   const temaGuardado = recuerda.lee("patrimonio.tema");
@@ -25,6 +27,47 @@
     raiz.dataset.tema = raiz.dataset.tema === "claro" ? "oscuro" : "claro";
     recuerda.guarda("patrimonio.tema", raiz.dataset.tema);
   };
+
+  /* ---------------------------------------------- perfiles */
+  // Selector arriba: tu cartera, la de tu pareja, la de tus hijos… y «Todos juntos».
+  (function montaPerfiles() {
+    const P = window.PERFILES, sel = $("#selPerfil");
+    if (!P || !sel) return;
+    if (D && D.modo === "demo" && P.lista.length < 2) return;   // en la demo todavía no pinta nada
+    sel.innerHTML = "";
+    P.lista.forEach(x => sel.add(new Option(x.nombre, x.id)));
+    if (P.todos) sel.add(new Option("Todos juntos", "todos"));
+    sel.add(new Option(P.lista.length > 1 ? "Gestionar perfiles…" : "+ Añadir un perfil (pareja, hijos…)", "__gestionar"));
+    sel.value = P.activo;
+    sel.hidden = false;
+    sel.onchange = async () => {
+      const v = sel.value;
+      if (v === "__gestionar") {
+        sel.value = P.activo;
+        if (window.Editor && window.Editor.perfiles) window.Editor.perfiles();
+        return;
+      }
+      sel.disabled = true;
+      try {
+        const r = await fetch("api/perfiles/activar", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: v }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) throw new Error((j.errores || ["No he podido cambiar de perfil."]).join("\n"));
+        location.reload();
+      } catch (e) { alert(e.message); sel.value = P.activo; sel.disabled = false; }
+    };
+    if (P.activo === "todos") {
+      const nombres = P.lista.filter(x => x.conDatos).map(x => x.nombre);
+      $("#bannerTodosTexto").innerHTML = "<b>Todos juntos:</b> la suma de " +
+        nombres.map(n => `<b>${String(n).replace(/[<>&]/g, "")}</b>`).join(", ").replace(/, ([^,]*)$/, " y $1") +
+        ". Solo sirve para mirar: para cambiar datos, elige un perfil en el selector de arriba.";
+      $("#bannerTodos").hidden = false;
+    }
+    if (!D) {
+      const yo = P.lista.find(x => x.id === P.activo);
+      if (yo) $("#marcaTexto").textContent = yo.nombre;
+    }
+  })();
 
   if (!D) {
     $("#btnTema").onclick = cambiaTema;
@@ -56,6 +99,10 @@
     ordenTabla: { col: "fecha", desc: true },
     btcVivo: null,
     compRef: recuerda.lee("patrimonio.compRef") || "mundo",
+    verVendidos: recuerda.lee("patrimonio.vendidos") === "1",
+    moneda: recuerda.lee("patrimonio.moneda") || "EUR",
+    rangoFondo: "todo",
+    rangoComp: "todo",
     ocultos: new Set(),
   };
 
@@ -69,6 +116,7 @@
         ? '<p class="vacio">Aparecerá cuando tengas compras anotadas.</p>'
         : '<p class="vacio">Cierra la ventana negra de la app y vuelve a abrirla para calcular esta sección.</p>';
       $("#compRef").innerHTML = "";
+      if ($("#compRango")) $("#compRango").innerHTML = "";
       $("#grafComparacion").innerHTML = "";
       return;
     }
@@ -90,19 +138,21 @@
       : dif > 0 ? `Vas ${G.fmtEur(Math.abs(dif), 0)} por delante del ${r.nombre} (${G.fmtPctSigno(pct, 1)}).`
       : `Con el ${r.nombre} tendrías ${G.fmtEur(Math.abs(dif), 0)} más (${G.fmtPctSigno(-dif / C.tuValor, 1)}).`;
     const caja = (et, v, extra, cls = "") => `<div class="compCaja ${cls}"><span>${et}</span><b>${v}</b>${extra ? `<small>${extra}</small>` : ""}</div>`;
+    pintaSegm($("#compRango"), RANGOS, estado.rangoComp, id => { estado.rangoComp = id; pintaComparacion(); });
+    const i0 = desdeIdx(estado.rangoComp), cortaC = arr => (arr || []).slice(i0);
     $("#compTitular").innerHTML =
       caja("Tú tienes hoy", G.fmtEur(C.tuValor, 0), `TIR ${G.fmtPctSigno(C.tuTir, 1)}`) +
       caja(`Con el ${r.nombre} tendrías`, G.fmtEur(r.valor, 0), `TIR ${G.fmtPctSigno(r.tir, 1)}`) +
       caja("Has puesto de tu bolsillo", G.fmtEur(C.aportado[C.aportado.length - 1], 0), "compras menos ventas") +
       caja("Veredicto", veredicto, "", "veredicto");
     G.multiLinea($("#grafComparacion"), {
-      fechas: D.fechas, alto: 300,
+      fechas: cortaC(D.fechas), alto: 300,
       series: [
-        { nombre: "Tu cartera", valores: C.tuya, color: G.css("--s1"), destacado: true },
-        { nombre: "Con el " + r.nombre, valores: r.serie, color: G.css("--s2") },
-        { nombre: "Tu dinero puesto", valores: C.aportado, color: G.css("--tinta3") },
+        { nombre: "Tu cartera", valores: cortaC(C.tuya), color: G.css("--s1"), destacado: true },
+        { nombre: "Con el " + r.nombre, valores: cortaC(r.serie), color: G.css("--s2") },
+        { nombre: "Tu dinero puesto", valores: cortaC(C.aportado), color: G.css("--tinta3") },
       ],
-      formatoY: v => G.fmtEurCorto(v),
+      formatoY: G.fmtEurCorto,
       formatoValor: v => G.fmtEur(v, 0),
       desdeCero: true,
     });
@@ -139,6 +189,10 @@
   const visibles = () => TODOS().filter(p => !estado.ocultos.has(p.id));
   const filtrando = () => estado.ocultos.size > 0;
   const buscaProd = id => TODOS().find(p => p.id === id);
+  // Lo que ya vendiste del todo: sigue contando en la historia, la TIR y lo ganado,
+  // pero en el panel no ocupa sitio con 0 € salvo que pidas verlo.
+  const vendido = p => Math.abs(p.valor || 0) < 0.005 && (p.serie || []).some(v => v);
+  const enPanel = () => TODOS().filter(p => estado.verVendidos || !vendido(p));
 
   /* ---------------------------------------------- precio en vivo */
   function precioVivo() {
@@ -160,99 +214,10 @@
     return { eur, pct: eur / p.aportado };
   }
 
-  /* ---------------------------------------------- TIR (XIRR) */
-  function xirr(flujos) {
-    const f = flujos.filter(x => x.v);
-    if (f.length < 2) return null;
-    if (!(f.some(x => x.v < 0) && f.some(x => x.v > 0))) return null;
-    const t0 = Math.min.apply(null, f.map(x => x.t));
-    const ANO = 365 * 24 * 3600 * 1000;
-    const van = tasa => {
-      let s = 0;
-      const base = 1 + tasa;
-      if (base <= 1e-9) return Infinity;
-      for (const x of f) s += x.v / Math.pow(base, (x.t - t0) / ANO);
-      return s;
-    };
-    let lo = -0.9999, hi = 10, vlo = van(lo), vhi = van(hi);
-    if (!isFinite(vlo) || !isFinite(vhi) || vlo * vhi > 0) return null;
-    for (let i = 0; i < 200; i++) {
-      const mid = (lo + hi) / 2, vm = van(mid);
-      if (Math.abs(vm) < 1e-7) return mid;
-      if (vlo * vm <= 0) hi = mid; else { lo = mid; vlo = vm; }
-    }
-    return (lo + hi) / 2;
-  }
-
-  /* ----------------------------------------------------------------
-     Métricas de un conjunto de componentes. Se recalcula todo aquí
-     para que, al apagar series, cada cifra del panel siga cuadrando.
-     ---------------------------------------------------------------- */
+  /* Métricas de un conjunto de componentes (calculos.js): al apagar series, cada cifra
+     del panel se recalcula y sigue cuadrando. */
   function metricas(lista) {
-    const n = D.fechas.length;
-    const serie = new Array(n).fill(0);
-    const serieAp = new Array(n).fill(0);
-    let valor = 0, aportado = 0, valorConCoste = 0, valorTir = 0, nAp = 0;
-    const flujos = [];
-
-    lista.forEach(p => {
-      const s = p.serie || [], sa = p.serieAportado || [];
-      for (let i = 0; i < n; i++) {
-        if (s[i] != null) serie[i] += s[i];
-        if (sa[i] != null) serieAp[i] += sa[i];
-      }
-      valor += valorDe(p);
-      if (p.aportado != null && p.aportado > 0) {
-        aportado += p.aportado;
-        valorConCoste += valorDe(p);
-        nAp += (p.aportaciones || []).filter(a => a.importe).length;
-      }
-      // La TIR usa todo el dinero que entró y salió (compras, ventas, dividendos y
-      // comisiones), y solo el valor de los productos que tienen esos movimientos.
-      if (p.flujos && p.flujos.length) {
-        p.flujos.forEach(([f, v]) => flujos.push({ t: Date.parse(f), v }));
-        valorTir += valorDe(p);
-      }
-    });
-
-    const plusvalia = aportado ? valorConCoste - aportado : null;
-    const tir = flujos.length
-      ? xirr(flujos.concat([{ t: Date.parse(D.fechaExtracto), v: valorTir }]))
-      : null;
-
-    const am = D.aportacionesMensuales;
-    const ids = new Set(lista.map(p => p.id));
-    const porMes = am.meses.map((_, i) => Object.keys(am.porProducto)
-      .reduce((a, id) => a + (ids.has(id) ? (am.porProducto[id][i] || 0) : 0), 0));
-    const mesesConAp = am.meses.filter((m, i) => porMes[i] > 0);
-    const ult12 = porMes.slice(-12);
-    const ritmo = ult12.length ? ult12.reduce((a, b) => a + b, 0) / ult12.length : 0;
-
-    let racha = 0;
-    if (mesesConAp.length) {
-      const set = new Set(mesesConAp);
-      const ult = mesesConAp[mesesConAp.length - 1].split("-");
-      let y = +ult[0], mo = +ult[1];
-      while (set.has(y + "-" + String(mo).padStart(2, "0"))) {
-        racha++; mo--; if (mo === 0) { mo = 12; y--; }
-      }
-    }
-
-    let pico = 0, caida = 0, caidaFecha = null;
-    for (let i = 0; i < n; i++) {
-      pico = Math.max(pico, serie[i]);
-      if (pico > 0) {
-        const c = serie[i] / pico - 1;
-        if (c < caida) { caida = c; caidaFecha = D.fechas[i]; }
-      }
-    }
-
-    return {
-      valor, aportado, valorConCoste, plusvalia,
-      rentabilidad: aportado ? plusvalia / aportado : null,
-      tir, numAportaciones: nAp, ritmo, racha, caida, caidaFecha,
-      serie, serieAportado: serieAp,
-    };
+    return C.metricas(lista, D, valorDe);
   }
 
   function agrupa(lista, campo) {
@@ -272,9 +237,9 @@
     { id: "6m", et: "6M", dias: 182 }, { id: "ytd", et: "YTD", dias: null },
     { id: "1a", et: "1A", dias: 365 }, { id: "todo", et: "Todo", dias: null },
   ];
-  function desdeIdx() {
+  function desdeIdx(rango = estado.rango) {
     const n = D.fechas.length;
-    const r = RANGOS.find(x => x.id === estado.rango);
+    const r = RANGOS.find(x => x.id === rango);
     if (!r || r.id === "todo") return 0;
     if (r.id === "ytd") {
       const ini = D.fechaExtracto.slice(0, 4) + "-01-01";
@@ -305,7 +270,7 @@
   function pintaFiltros() {
     const cont = $("#filtros");
     cont.innerHTML = "";
-    TODOS().forEach(p => {
+    enPanel().forEach(p => {
       const on = !estado.ocultos.has(p.id);
       const b = document.createElement("button");
       b.className = "filtro";
@@ -330,15 +295,21 @@
     [
       { id: "todo", et: "Ver todo", act: !filtrando(), fn: () => estado.ocultos.clear() },
       { id: "largo", et: "Solo largo plazo", act: esLargo, fn: () => { estado.ocultos = new Set(cortos); } },
+      { id: "vendidos", et: `Vendidos (${TODOS().filter(vendido).length})`, act: estado.verVendidos,
+        fn: () => { estado.verVendidos = !estado.verVendidos;
+          recuerda.guarda("patrimonio.vendidos", estado.verVendidos ? "1" : "0"); } },
     ].forEach(pr => {
       if (pr.id === "largo" && !cortos.length) return;
+      if (pr.id === "vendidos" && !TODOS().some(vendido)) return;
       const b = document.createElement("button");
       b.className = "filtro preset";
       b.setAttribute("aria-pressed", String(pr.act));
       b.textContent = pr.et;
       b.title = pr.id === "largo"
         ? "Deja fuera el colchón y el efectivo: solo lo que tienes invertido a largo plazo"
-        : "Vuelve a mostrar todos los componentes";
+        : pr.id === "vendidos"
+          ? "Productos que ya vendiste del todo. Aunque no se vean, siguen contando en la historia, la TIR y lo que has ganado"
+          : "Vuelve a mostrar todos los componentes";
       b.onclick = () => { pr.fn(); pintaPatrimonio(); };
       cont.appendChild(b);
     });
@@ -355,6 +326,11 @@
       const cl = m.plusvalia >= 0 ? "pos" : "neg";
       partes.push(`<span class="${cl} fuerte">${G.fmtEurSigno(m.plusvalia)}</span>
         <span class="${cl}">(${G.fmtPctSigno(m.rentabilidad)})</span> sobre lo aportado`);
+    }
+    // Lo ya cobrado (o perdido) al vender y en dividendos: no está en la plusvalía de lo que tienes.
+    if (Math.abs(m.realizado) >= 1) {
+      partes.push(`<span class="${m.realizado >= 0 ? "pos" : "neg"} fuerte">${G.fmtEurSigno(m.realizado)}</span>
+        ${m.realizado >= 0 ? "ya cobrados" : "ya perdidos"} en ventas, dividendos e intereses`);
     }
     if (m.tir !== null) partes.push(`TIR anualizada <span class="fuerte">${G.fmtPctSigno(m.tir)}</span>`);
 
@@ -387,9 +363,13 @@
     const pct = Math.max(0, Math.min(1, m.valor / sig));
     $("#progEnv").hidden = false;
     $("#progRelleno").style.width = (pct * 100).toFixed(1) + "%";
+    const meta = (propio && propio > m.valor && D.objetivo.etiqueta) ? `${D.objetivo.etiqueta} (${G.fmtEurCorto(sig)})` : G.fmtEurCorto(sig);
+    const editable = window.Editor && window.Editor.objetivo && D.modo === "propio";
     $("#progIzq").innerHTML =
-      `<b style="color:var(--tinta)">${G.fmtPct(pct, 1)}</b> del camino hacia ${G.fmtEurCorto(sig)}`;
+      `<b style="color:var(--tinta)">${G.fmtPct(pct, 1)}</b> del camino hacia ${meta}` +
+      (editable ? '<button class="editar" id="btnObjetivo" title="Elegir tu propio objetivo">cambiar</button>' : "");
     $("#progDer").textContent = "Faltan " + G.fmtEur(sig - m.valor, 0);
+    if (editable) $("#btnObjetivo").onclick = () => window.Editor.objetivo();
   }
 
   function pintaKPIs(m) {
@@ -465,7 +445,7 @@
   function pintaChips() {
     const cont = $("#chips");
     cont.innerHTML = "";
-    TODOS().forEach(p => {
+    enPanel().forEach(p => {
       const oculto = estado.ocultos.has(p.id);
       const b = document.createElement("button");
       b.className = "chip" + (oculto ? " apagado" : "");
@@ -515,6 +495,133 @@
     const suma = meses.reduce((a, _, i) => a + series.reduce((b, s) => b + (s.valores[i] || 0), 0), 0);
     $("#notaAport").textContent = meses.length
       ? `${G.fmtEur(suma, 0)} en ${meses.length} ${meses.length === 1 ? "mes" : "meses"}` : "";
+  }
+
+  /* Países y sectores de todo lo que tienes en bolsa: cada producto pesa lo que vale. */
+  function pintaExpoTotal() {
+    const sec = $("#seccionExpo");
+    if (!sec) return;
+    const { enBolsa, fuera, sinDatos, sinNombre, paises: lp, sectores: ls } = C.agregaExposicion(visibles(), valorDe);
+    sec.hidden = !(enBolsa > 0);
+    if (sec.hidden) return;
+    const total = enBolsa + fuera + sinDatos;
+    $("#expoTotNota").textContent = `De lo que tienes en bolsa: ${G.fmtEur(enBolsa, 0)} (${G.fmtPct(enBolsa / total, 0)} de tu patrimonio)`;
+    $("#expoTotTitular").innerHTML = lp.length
+      ? `<b>${G.fmtPct(lp[0][1] / 100, 0)}</b> de lo que tienes en bolsa está en <b>${lp[0][0]}</b>` +
+        (ls.length ? `, y el <b>${G.fmtPct(ls[0][1] / 100, 0)}</b> es ${ls[0][0].toLowerCase()}.` : ".")
+      : "";
+    G.barrasHorizontales($("#expoTotPaises"), { datos: lp, color: G.css("--s1") });
+    G.barrasHorizontales($("#expoTotSectores"), { datos: ls, color: G.css("--s3") });
+    const pie = [];
+    if (fuera > 1) pie.push(`Fuera de bolsa (renta fija, liquidez, cripto…): ${G.fmtEur(fuera, 0)}.`);
+    if (sinDatos > 1) {
+      pie.push(`Sin reparto: ${G.fmtEur(sinDatos, 0)} (${sinNombre.slice(0, 4).join(", ")}${sinNombre.length > 4 ? "…" : ""}).
+        Si es un plan o una cartera que no cotiza, en su ficha (Mis datos → Productos → opciones avanzadas) puedes
+        decir a qué fondo se parece y Rumbo usará su reparto.`);
+    }
+    pie.push("Datos de Morningstar sobre la cartera de cada fondo, con la fecha de su última publicación. Se actualizan como mucho una vez al mes.");
+    $("#expoTotPie").innerHTML = pie.join(" ");
+  }
+
+  /* ---------------------------------------------- liquidez y fondo de emergencia */
+  // Liquidez: lo que puedes tener en el banco en días (cuentas y monetarios, o lo que marques).
+
+  function pintaLiquidez() {
+    const sec = $("#seccionLiquidez");
+    if (!sec) return;
+    const c = D.colchon;
+    const R = C.resumenLiquidez(TODOS(), c, valorDe);
+    const lista = R.productos, liquidez = R.liquidez;
+    const editable = window.Editor && window.Editor.colchon && D.modo === "propio";
+    sec.hidden = !lista.length && !c;
+    if (sec.hidden) return;
+    const btn = $("#btnColchon");
+    btn.hidden = !editable || !c;
+    btn.onclick = () => window.Editor.colchon();
+    const total = metricas(TODOS()).valor;
+    $("#liqNota").textContent = `${G.fmtEur(liquidez, 0)} disponibles en días · ${G.fmtPct(total ? liquidez / total : 0, 0)} de tu patrimonio`;
+    const tabla = `<div class="tablaEnv" style="margin-top:14px"><table class="dt"><tbody>${lista.map(p =>
+      `<tr><td><i class="pt" style="background:${color(p)}"></i>${p.corto || p.nombre}</td><td>${G.fmtEur(valorDe(p), 0)}</td>
+       <td class="subt">${G.fmtPct(liquidez ? valorDe(p) / liquidez : 0, 0)}</td></tr>`).join("")}</tbody></table></div>`;
+    const queCuenta = '<p class="subt" style="margin:10px 0 0">Cuentan las cuentas y los fondos monetarios. Para cambiar qué cuenta, en la ficha del producto: «Cuenta como liquidez».</p>';
+    if (!c) {
+      $("#liqCuerpo").innerHTML = `<p class="subt" style="margin:0 0 12px">¿Cuánto quieres tener siempre a mano por si
+        pasa algo? Dilo en meses de gastos (lo habitual es entre 3 y 6) y Rumbo te dirá si lo tienes cubierto y cuánto te
+        sobra para invertir.</p>${editable ? '<button class="btn prim" id="btnColchonNuevo">Definir mi fondo de emergencia</button>' : ""}${tabla}${queCuenta}`;
+      if (editable) $("#btnColchonNuevo").onclick = () => window.Editor.colchon();
+      return;
+    }
+    const { objetivo, cubierto, sobra, meses, pct } = R;
+    $("#liqCuerpo").innerHTML = `
+      <div class="cifras">
+        <div class="cifra"><span>Fondo de emergencia</span><b>${G.fmtEur(objetivo, 0)}</b>
+          <small>${c.modo === "meses" ? `${String(c.meses).replace(".", ",")} meses de ${G.fmtEur(c.gastoMensual, 0)}` : "importe fijo"}</small></div>
+        <div class="cifra"><span>Tienes en liquidez</span><b>${G.fmtEur(liquidez, 0)}</b>
+          <small>${meses != null ? `te cubre ${meses.toLocaleString("es-ES", { maximumFractionDigits: 1 })} meses de gastos` : "cuentas y monetarios"}</small></div>
+        <div class="cifra"><span>${sobra >= 0 ? "Disponible para invertir" : "Te falta para completarlo"}</span>
+          <b class="${sobra >= 0 ? "pos" : "neg"}">${G.fmtEur(Math.abs(sobra), 0)}</b>
+          <small>${sobra >= 0 ? "lo que pasa del colchón" : "antes de invertir más"}</small></div>
+      </div>
+      <div class="prog" style="margin-top:18px;max-width:none">
+        <div class="progBarra"><div class="progRelleno" style="width:${(pct * 100).toFixed(1)}%"></div></div>
+        <div class="progPie"><span><b style="color:var(--tinta)">${G.fmtPct(pct, 0)}</b> del fondo de emergencia cubierto</span>
+          <span>${G.fmtEur(cubierto, 0)} de ${G.fmtEur(objetivo, 0)}</span></div></div>
+      ${tabla}${queCuenta}`;
+  }
+
+  /* ---------------------------------------------- reparto objetivo y rebalanceo */
+  function pintaReparto() {
+    const sec = $("#seccionReparto");
+    if (!sec) return;
+    const o = C.normalizaReparto(D.objetivoReparto);
+    // En la cartera de ejemplo también: se prueba sin guardar.
+    const editable = window.Editor && window.Editor.reparto && (D.modo === "propio" || D.modo === "demo");
+    const btn = $("#btnReparto");
+    btn.hidden = !editable || !o;
+    btn.onclick = () => window.Editor.reparto();
+    if (!o) {
+      sec.hidden = !editable;
+      $("#repartoNota").textContent = "";
+      $("#repartoCuerpo").innerHTML = `<p class="subt" style="margin:0 0 12px">Di qué porcentaje quieres en cada tipo de
+        activo (por ejemplo, 80 % renta variable y 20 % renta fija) y Rumbo te avisará cuando te desvíes y te dirá dónde
+        meter tu próxima aportación para volver a cuadrar, sin vender nada.</p>
+        <button class="btn prim" id="btnRepartoNuevo">Definir mi reparto objetivo</button>`;
+      if (editable) $("#btnRepartoNuevo").onclick = () => window.Editor.reparto();
+      return;
+    }
+    sec.hidden = false;
+    const grupos = C.gruposReparto(TODOS(), o, valorDe, p => p ? color(p) : G.css("--tinta3"));
+    const { filas, peor } = C.filasReparto(grupos, o);
+    const fuera = TODOS().filter(p => valorDe(p) > 0 && p.tipoClave !== "deuda" && !C.cuentaEnReparto(p, o))
+      .map(p => p.corto || p.nombre);
+    const ET = { ok: "OK", vigilar: "Vigilar", rebalancear: "Rebalancear" };
+    $("#repartoNota").textContent = `${o.por === "producto" ? "Por producto" : "Por tipo de activo"} · ` +
+      `OK hasta ${o.vigilar} puntos de desviación, rebalancear desde ${o.rebalancear}`;
+    $("#repartoCuerpo").innerHTML = `
+      <div class="tablaEnv"><table class="dt"><thead><tr><th>${o.por === "producto" ? "Producto" : "Tipo de activo"}</th><th>Ahora</th>
+        <th>Objetivo</th><th>Desviación</th><th>Estado</th><th title="Lo que habría que comprar (+) o vender (−) para cuadrarlo hoy">Para cuadrar</th></tr></thead>
+        <tbody>${filas.map(f => `<tr><td><i class="pt" style="background:${f.color}"></i>${escH(f.nombre)}${o.por !== "producto" && f.productos.length
+          ? `<small class="repDe">${escH(f.productos.slice(0, 3).join(" · ") + (f.productos.length > 3 ? ` y ${f.productos.length - 3} más` : ""))}</small>` : ""}</td>
+          <td>${G.fmtPct(f.ahora / 100, 1)}</td><td>${G.fmtPct(f.obj / 100, 1)}</td>
+          <td class="${Math.abs(f.desv) < 0.05 ? "" : f.desv > 0 ? "pos" : "neg"}">${(f.desv >= 0 ? "+" : "−") + Math.abs(f.desv).toLocaleString("es-ES", { maximumFractionDigits: 1 })} pts</td>
+          <td><span class="estadoRep ${f.estado}">${ET[f.estado]}</span></td>
+          <td>${Math.abs(f.cuadrar) < 1 ? "—" : (f.cuadrar > 0 ? "+" : "−") + G.fmtEur(Math.abs(f.cuadrar), 0)}</td></tr>`).join("")}</tbody></table></div>
+      <div class="calcAporte">Voy a aportar <input id="repAporte" inputmode="decimal" value="${Math.round((D.total.ritmoMensual || 500) / 50) * 50 || 500}"> €
+        <span class="subt">→ así lo repartiría para acercarme al objetivo sin vender:</span></div>
+      <div id="repCalc"></div>
+      ${fuera.length ? `<p class="subt" style="margin:12px 0 0">No cuentan para este reparto: ${escH(fuera.join(" · "))}.</p>` : ""}
+      <p class="subt" style="margin:12px 0 0">${peor && peor.estado !== "ok"
+        ? `Lo que más se ha desviado: <b>${peor.nombre}</b> (${(peor.desv >= 0 ? "+" : "−") + Math.abs(peor.desv).toFixed(1).replace(".", ",")} puntos).`
+        : "Todo dentro del margen: no hace falta tocar nada."} Es una herramienta para pensar, no una recomendación de inversión.</p>`;
+    const calcula = () => {
+      const a = C.leeImporte($("#repAporte").value) || 0;
+      const reparto = C.repartirAportacion(filas, o.pesos, a);
+      $("#repCalc").innerHTML = a > 0 ? `<div class="tablaEnv"><table class="dt"><tbody>${filas.map((f, i) => reparto[i] >= 1
+        ? `<tr><td><i class="pt" style="background:${f.color}"></i>${f.nombre}</td><td>${G.fmtEur(reparto[i], 0)}</td>
+           <td class="subt">${G.fmtPct(reparto[i] / a, 0)} de la aportación</td></tr>` : "").join("")}</tbody></table></div>` : "";
+    };
+    $("#repAporte").oninput = calcula;
+    calcula();
   }
 
   function pintaHitos(mTodo) {
@@ -602,6 +709,9 @@
       `${f.length} movimientos · ${G.fmtEur(f.reduce((a, r) => a + r.importe, 0), 0)}`;
   }
 
+  // Los botones para cambiar el objetivo, el colchón o el reparto dependen del editor, que llega después.
+  document.addEventListener("rumbo:editor", () => { if (D) pintaPatrimonio(); });
+
   function pintaPatrimonio() {
     const mTodo = metricas(TODOS());
     const mVis = filtrando() ? metricas(visibles()) : mTodo;
@@ -612,6 +722,9 @@
     pintaChips();
     pintaDistribucion();
     pintaBarras();
+    pintaExpoTotal();
+    pintaLiquidez();
+    pintaReparto();
     pintaHitos(mTodo);
     pintaProyeccion();
     pintaTabla();
@@ -725,7 +838,7 @@
      PESTAÑA 3 · FONDOS
      ================================================================ */
   function pintaFondos() {
-    const lista = TODOS();
+    const lista = TODOS().filter(p => !vendido(p)).concat(TODOS().filter(vendido));
     if (!estado.fondo || !buscaProd(estado.fondo)) estado.fondo = lista[0].id;
     const p = buscaProd(estado.fondo);
 
@@ -735,6 +848,7 @@
       b.style.setProperty("--c", color(x));
       b.setAttribute("aria-pressed", String(x.id === estado.fondo));
       b.innerHTML = `<i></i>${x.corto || x.nombre}`;
+      if (vendido(x)) { b.classList.add("vendido"); b.title = "Ya lo vendiste del todo"; }
       b.onclick = () => { estado.fondo = x.id; pintaFondos(); };
       $("#selFondo").appendChild(b);
     });
@@ -742,6 +856,33 @@
     pintaFichaFondo(p);
     pintaExposicion(p);
     pintaTablaFondo(p);
+  }
+
+  // «Ganancia total = precio + ventas + dividendos − comisiones», con las partes que tenga.
+  function desgloseGanancia(p) {
+    const c = p.cobros || {};
+    const partes = [];
+    if (p.plusvalia) partes.push(`${G.fmtEurSigno(p.plusvalia)} de lo que aún tienes`);
+    if (c.ventas) partes.push(`${G.fmtEurSigno(c.ventas)} en ventas`);
+    const piso = p.tipoClave === "inmueble";
+    if (c.dividendos) partes.push(`${G.fmtEurSigno(c.dividendos)} en ${piso ? "alquileres" : "dividendos e intereses"}`);
+    if (c.gastos) partes.push(`${G.fmtEurSigno(-c.gastos)} en ${piso ? "gastos" : "comisiones aparte"}`);
+    const base = (p.aportado || 0) + (p.costeVendido || 0);
+    return `<p class="subt desglose">Ganancia total: ${partes.join(" · ")}.` +
+      (base > 0 ? ` El % es sobre todo lo que has llegado a invertir en él (${G.fmtEur(base)}).` : "") + `</p>`;
+  }
+
+  // Rentabilidad del alquiler de un inmueble: bruta (lo cobrado) y neta (menos gastos), sobre lo que vale hoy.
+  function desgloseAlquiler(p) {
+    const al = p.alquiler;
+    if (al.cobrado12 || al.gastos12) {
+      const sobre = v => p.valor > 0 ? G.fmtPct(v / p.valor, 2) : "—";
+      return `<p class="subt desglose">Alquiler en los últimos 12 meses: ${G.fmtEur(al.cobrado12)} cobrados y
+        ${G.fmtEur(al.gastos12)} de gastos. Rentabilidad bruta ${sobre(al.cobrado12)} y neta
+        ${sobre(al.cobrado12 - al.gastos12)} sobre lo que vale hoy (${G.fmtEur(p.valor)}).</p>`;
+    }
+    return `<p class="subt desglose">Alquiler desde el principio: ${G.fmtEur(al.cobrado)} cobrados y ${G.fmtEur(al.gastos)}
+      de gastos (nada en los últimos 12 meses).</p>`;
   }
 
   function pintaFichaFondo(p) {
@@ -760,7 +901,6 @@
       [p.etqPrecio || "Valor liquidativo",
         p.nav != null ? G.fmtEur(p.nav) + (p.navFecha ? " · cierre del " + G.fmtFechaCorta(p.navFecha) : "") : null],
       ["Fuente del precio", p.fuenteTexto || p.fuentePrecio],
-      ["Plusvalía ya materializada", p.realizado ? G.fmtEur(p.realizado) : null],
       ["Peso en el patrimonio", p.peso != null ? G.fmtPct(p.peso, 1) : null],
     ].filter(c => c[0] && c[1]);
 
@@ -772,9 +912,13 @@
       <header>
         <h2><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${color(p)};margin-right:9px"></span>${p.nombre}</h2>
         <div class="sep"></div>
+        <div class="segm" id="segRangoFondo"></div>
         ${hayVL ? '<div class="segm" id="segSerie"></div>' : ""}
       </header>
       ${p.papel ? `<div class="papel">${p.papel}</div>` : ""}
+      ${(p.traspasos || []).filter(t => t.estimada).map(t => `<div class="av"><span>⚠</span><span>La fecha del traspaso
+        ${t.tipo === "salida" ? "a" : "desde"} «${escH(t.otroNombre || t.otro)}» (${G.fmtFecha(t.fecha)}) es estimada. Compruébala en el
+        historial de órdenes de MyInvestor y corrígela en Mis datos → Movimientos.</span></div>`).join("")}
       ${p.indiceDetalle ? `<p style="color:var(--tinta2);font-size:13.5px;margin:0 0 16px">${p.indiceDetalle}</p>` : ""}
       <div class="ficha">${campos.map(c => `<div><dt>${c[0]}</dt><dd>${c[1]}</dd></div>`).join("")}</div>
       <div id="ventanas"></div>
@@ -796,12 +940,31 @@
       const plv = plusvaliaDe(p);
       res.push(["En vivo ahora", `${G.fmtEur(valorDe(p))} · ${G.fmtPctSigno(plv.pct, 2)}`]);
     }
+    const conCobros = p.gananciaTotal != null && Math.abs(p.realizado || 0) >= 0.01;
+    if (conCobros) {
+      res.push(["Ganancia total", `<span class="${p.gananciaTotal >= 0 ? "pos" : "neg"}">${G.fmtEurSigno(p.gananciaTotal)}</span>` +
+        (p.rentabilidadTotal != null ? ` · ${G.fmtPctSigno(p.rentabilidadTotal, 2)}` : "")]);
+    }
+    const al = p.alquiler;
+    const alq12 = al && (al.cobrado12 || al.gastos12);
+    if (alq12) {
+      const neto = al.cobrado12 - al.gastos12;
+      res.push(["Alquiler neto, 12 meses", `<span class="${neto >= 0 ? "pos" : "neg"}">${G.fmtEurSigno(neto)}</span>` +
+        (p.valor > 0 ? ` · ${G.fmtPctSigno(neto / p.valor, 2)}` : "")]);
+    }
+    // Intereses de una cuenta: lo cobrado en los últimos 12 meses, sobre lo que hay hoy.
+    const it = p.intereses;
+    if (it && (it.cobrado12 || it.gastos12)) {
+      const neto = it.cobrado12 - it.gastos12;
+      res.push(["Intereses, 12 meses", `<span class="${neto >= 0 ? "pos" : "neg"}">${G.fmtEurSigno(neto)}</span>` +
+        (p.valor > 0 ? ` · ${G.fmtPctSigno(neto / p.valor, 2)}` : "")]);
+    }
     res.push(["TIR", p.tir != null ? G.fmtPctSigno(p.tir) : "—"]);
     // Tu posición y el comportamiento del producto van en filas separadas:
     // el "1 año" del bitcoin es del precio, no de tu dinero.
     let html = `<div class="ventanas"><span class="grupoEtq">Tu posición</span>` +
       res.map(r => `<div class="ventana"><div class="e">${r[0]}</div><div class="v">${r[1]}</div></div>`).join("") +
-      `</div>`;
+      `</div>` + (conCobros ? desgloseGanancia(p) : "") + (al ? desgloseAlquiler(p) : "");
     if (p.ventanas) {
       const et = { "1m": "1 mes", "3m": "3 meses", "6m": "6 meses", ytd: "En el año", "1a": "1 año" };
       const celdas = ["1m", "3m", "6m", "ytd", "1a"].filter(k => p.ventanas[k] != null)
@@ -819,9 +982,17 @@
         estado.serieDetalle, id => { estado.serieDetalle = id; pintaFichaFondo(p); });
     }
 
+    // Periodo propio de esta gráfica: por defecto todo el histórico del producto.
+    pintaSegm($("#segRangoFondo"), RANGOS, estado.rangoFondo,
+      id => { estado.rangoFondo = id; pintaFichaFondo(p); });
+    // Empieza donde empieza el fondo: sin un tramo vacío al principio si llegó más tarde que el resto.
+    const primerDato = Math.max(0, (p.serie || []).findIndex(v => v != null && v > 0));
+    const i0 = Math.max(desdeIdx(estado.rangoFondo), estado.serieDetalle === "vl" ? 0 : primerDato);
+    const cortaF = arr => (arr || []).slice(i0);
+
     const verVL = hayVL && estado.serieDetalle === "vl";
     const paleta = tonos(color(p));
-    const fechas = corta(D.fechas);
+    const fechas = cortaF(D.fechas);
     const eventos = (p.aportaciones || []).filter(a => a.importe).map(a => {
       const niv = a.nivel == null ? 1 : a.nivel;
       return {
@@ -829,13 +1000,31 @@
         texto: `${["Aportación pequeña", "Aportación habitual", "Aportación extraordinaria"][niv]}: ${G.fmtEur(a.importe)}`,
       };
     });
+    // Los traspasos, marcados en su día: «⇄ a World» o «⇄ desde AXA».
+    const marcas = (p.traspasos || []).map(t => {
+      const sale = t.tipo === "salida", otro = escH(t.otroNombre || t.otro);
+      const fila = (a, b) => b == null ? "" : `<tr><td>${a}</td><td>${b}</td></tr>`;
+      return {
+        fecha: t.fecha, aviso: t.estimada,
+        titulo: `Traspaso ${sale ? "a" : "desde"} ${t.otroNombre || t.otro}, ${G.fmtFecha(t.fecha)}`,
+        texto: `⇄ Traspaso ${sale ? "a" : "desde"} ${otro}`,
+        html: `<b>${sale ? "Traspaso de salida" : "Traspaso de entrada"}</b>
+          <div class="ttTotal">${sale ? "→" : "←"} ${otro}</div>
+          <table>${fila("Fecha", G.fmtFecha(t.fecha) + (t.estimada ? " <span class=\"ttEstimada\">estimada</span>" : ""))}
+            ${fila("Valor traspasado", G.fmtEur(t.importe))}
+            ${fila("Participaciones", t.unidades != null ? G.nfNum.format(t.unidades) : null)}
+            ${fila("Coste que pasa", G.fmtEur(t.coste))}</table>
+          <div class="ttNota">${sale ? "Sale con su coste y su fecha de compra" : "Llega con el coste y la fecha de compra del fondo de origen"}:
+            no cuenta como venta.${t.estimada ? " Comprueba la fecha en MyInvestor y corrígela en Movimientos." : ""}</div>`,
+      };
+    });
     G.lineaConEventos($("#grafFondo"), {
       fechas,
-      valores: corta(verVL ? p.navSerie : p.serie),
-      color: color(p), alto: 280, eventos, desdeCero: !verVL,
+      valores: cortaF(verVL ? p.navSerie : p.serie),
+      color: color(p), alto: 280, eventos, marcas, desdeCero: !verVL,
       overlay: verVL ? null : ((p.serieAportado || []).some(v => v)
-        ? { nombre: "Aportado", valores: corta(p.serieAportado) } : null),
-      formatoY: verVL ? (v => G.fmtEur(v, v > 500 ? 0 : 2)) : null,
+        ? { nombre: "Aportado", valores: cortaF(p.serieAportado) } : null),
+      formatoY: verVL ? G.dinero(v => G.fmtEur(v, v > 500 ? 0 : 2)) : null,
       referencia: (verVL && p.precioMedio)
         ? { valor: p.precioMedio, etiqueta: "tu precio medio · " + G.fmtEur(p.precioMedio) } : null,
     });
@@ -863,7 +1052,7 @@
   function pintaExposicion(p) {
     const sec = $("#fondoExpo");
     const e = p.exposicion;
-    if (!e) { sec.hidden = true; return; }
+    if (!e || (!(e.paises || []).length && !(e.sectores || []).length)) { sec.hidden = true; return; }
     sec.hidden = false;
     const meses = (Date.parse(D.fechaExtracto) - Date.parse(e.actualizado)) / (30.44 * 864e5);
     const viejo = meses > 6;
@@ -873,7 +1062,9 @@
         <div class="sep"></div>
         <span class="expoNota ${viejo ? "viejo" : ""}">${viejo ? "⚠ " : ""}Datos a ${G.fmtFecha(e.actualizado)}${viejo ? " · conviene refrescarlos" : ""}</span>
       </header>
-      <p class="subt" style="margin:0 0 18px">${e.constituyentes ? e.constituyentes.toLocaleString("es-ES") + " empresas. " : ""}${e.fuente}. Datos del índice a la fecha indicada.</p>
+      <p class="subt" style="margin:0 0 18px">${e.constituyentes ? e.constituyentes.toLocaleString("es-ES") + " empresas. " : ""}${e.fuente || ""}.
+        ${e.empresa ? "Es una sola empresa: todo está en su país y su sector." : "Datos a la fecha indicada."}
+        ${e.rv != null && e.rv < 0.97 && !e.empresa ? ` Es el reparto de su parte en bolsa, que es el ${G.fmtPct(e.rv, 0)} del producto.` : ""}</p>
       <div class="expo">
         <div><h3>Por país</h3><div class="envGraf" id="expoPaises"></div></div>
         <div><h3>Por sector</h3><div class="envGraf" id="expoSectores"></div></div>
@@ -886,12 +1077,27 @@
     G.barrasHorizontales($("#expoSectores"), { datos: e.sectores, color: color(p) });
   }
 
+  function tablaTraspasos(p) {
+    const t = (p.traspasos || []).slice().reverse();
+    if (!t.length) return "";
+    return `<h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--tinta3);margin:22px 0 10px">Traspasos</h3>
+      <div class="tablaEnv"><table class="dt"><thead><tr><th>Fecha</th><th>Movimiento</th><th>Importe</th>
+        <th>${p.etqUnidades || "Participaciones"}</th><th title="Lo que habías pagado por lo traspasado: pasa al destino">Coste que pasa</th></tr></thead>
+      <tbody>${t.map(x => `<tr><td>${G.fmtFecha(x.fecha)}</td>
+        <td>${x.tipo === "entrada" ? "Entra desde " : "Sale hacia "}${x.otroNombre}${x.total ? " (todo)" : ""}</td>
+        <td>${G.fmtEur(x.importe)}</td><td>${x.unidades != null ? (x.tipo === "entrada" ? "+" : "−") + G.nfNum.format(x.unidades) : "—"}</td>
+        <td>${G.fmtEur(x.coste)}</td></tr>`).join("")}</tbody></table></div>
+      <p class="subt" style="margin:8px 0 0">Un traspaso no es una venta: lo que habías pagado y la fecha de cada compra pasan al
+        producto de destino, y no cuenta como dinero nuevo en tus aportaciones.</p>`;
+  }
+
   function pintaTablaFondo(p) {
     const sec = $("#fondoTabla");
     const filas = (p.aportaciones || []).filter(a => a.importe).slice().reverse();
     if (!filas.length) {
-      sec.innerHTML = `<header><h2>Aportaciones</h2></header>
-        <p class="vacio">Este componente no tiene aportaciones registradas: solo anotas su valor.</p>`;
+      sec.innerHTML = `<header><h2>${(p.traspasos || []).length ? "Movimientos" : "Aportaciones"}</h2></header>
+        ${(p.traspasos || []).length ? "" : '<p class="vacio">Este componente no tiene aportaciones registradas: solo anotas su valor.</p>'}
+        ${tablaTraspasos(p)}`;
       return;
     }
     const esFondo = p.tipoClave === "fondo" || p.tipoClave === "pension";
@@ -916,7 +1122,7 @@
             <td class="${pl >= 0 ? "pos" : "neg"}">${pl != null ? G.fmtEurSigno(pl) : "—"}</td>
             <td class="${rt >= 0 ? "pos" : "neg"}">${rt != null ? G.fmtPctSigno(rt, 1) : "—"}</td>
             <td>${dias}</td></tr>`;
-        }).join("")}</tbody></table></div>`;
+        }).join("")}</tbody></table></div>${tablaTraspasos(p)}`;
   }
 
   /* ================================================================
@@ -943,8 +1149,8 @@
       const desde = ra.desde || {};
       const MES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
       const corto = iso => { const q = iso.split("-"); return `${+q[2]} ${MES[+q[1] - 1]}`; };
-      const celda = (v, d) => v == null
-        ? `<td class="subt">${verProducto ? "—" : "aún no lo tenías"}</td>`
+      const celda = (v, d, vendido) => v == null
+        ? `<td class="subt">${verProducto ? "—" : vendido ? "ya lo habías vendido" : "aún no lo tenías"}</td>`
         : `<td class="${v >= 0 ? "pos" : "neg"}">${G.fmtPctSigno(v, 1)}` +
           `${d ? `<span class="subt" style="font-weight:400"> · desde ${corto(d)}</span>` : ""}</td>`;
       const prods = D.productos.filter(p => tabla[p.id]);
@@ -953,13 +1159,15 @@
           `<th>${a}${ra.parcial[i] ? " *" : ""}</th>`).join("")}</tr></thead>
          <tbody>${prods.map(p => `<tr>
            <td><i class="pt" style="background:${color(p)}"></i>${p.corto}</td>
-           ${tabla[p.id].map((v, i) => celda(v, (desde[p.id] || [])[i])).join("")}
+           ${tabla[p.id].map((v, i) => celda(v, (desde[p.id] || [])[i], ((ra.vendido || {})[p.id] || [])[i])).join("")}
          </tr>`).join("")}</tbody>` +
         (verProducto ? "" : `<tfoot><tr><td>Tu cartera</td>${ra.cartera.map(v =>
           `<td class="${v == null ? "" : v >= 0 ? "pos" : "neg"}">${G.fmtPctSigno(v, 1)}</td>`).join("")}</tr></tfoot>`);
     }
 
     pintaComparacion();
+    pintaDividendos();
+    pintaFiscal();
 
     const comp = D.comparador || [];
     const detalles = $("#compDetalles");
@@ -1019,6 +1227,141 @@
            <td>${G.fmtEur(c.base, 0)}</td><td>${G.fmtEur(c.anual)}</td>
            <td>${G.fmtEur(c.anual / 12)}</td></tr></tfoot>`;
     }
+  }
+
+  /* ---------------------------------------------- dividendos */
+  function pintaDividendos() {
+    const cont = $("#dividendos");
+    if (!cont) return;
+    const dv = D.dividendos;
+    if (!dv || !dv.porProducto.length) {
+      $("#notaDividendos").textContent = "";
+      cont.innerHTML = `<p class="vacio" style="text-align:left;padding:4px 0">Cuando anotes un dividendo,
+        un cupón o unos intereses (en «Mis datos → Movimientos», tipo «Dividendo o cupón»), aquí verás
+        cuánto te pagan tus inversiones cada año sin vender nada.</p>`;
+      return;
+    }
+    $("#notaDividendos").textContent = "Lo que te han pagado tus inversiones sin vender nada.";
+    const conAlquiler = TODOS().some(p => p.alquiler && p.alquiler.cobrado);
+    $("#seccionDividendos h2").textContent = conAlquiler ? "Dividendos, cupones, intereses y alquileres"
+      : "Dividendos, cupones e intereses";
+    const kpis = [
+      { e: "Cobrado en total", v: G.fmtEur(dv.total), n: `${dv.porProducto.reduce((a, l) => a + l.cobros, 0)} cobros` },
+      { e: "Últimos 12 meses", v: G.fmtEur(dv.ultimos12), n: "lo que te pagan en un año" },
+      { e: "Al mes, de media", v: G.fmtEur(dv.ultimos12 / 12), n: "como un pequeño sueldo extra" },
+      { e: "Rentabilidad por dividendo", v: dv.rentabilidad != null ? G.fmtPct(dv.rentabilidad, 2) : "—",
+        n: "12 meses, sobre lo que vale hoy" },
+    ];
+    cont.innerHTML =
+      `<div class="kpis" style="margin:6px 0 24px">${kpis.map(k =>
+        `<div class="kpi"><div class="e">${k.e}</div><div class="v">${k.v}</div><div class="n">${k.n}</div></div>`).join("")}</div>
+       <div class="envGraf" id="grafDividendos"></div>
+       <div class="tablaEnv" style="margin-top:16px"><table class="dt" id="tablaDividendos"></table></div>`;
+    const anoActual = D.fechaExtracto.slice(0, 4);
+    G.barrasSimples($("#grafDividendos"), {
+      categorias: dv.porAno.map(([a]) => a + (a === anoActual ? " *" : "")),
+      valores: dv.porAno.map(([, v]) => v), alto: 220, color: G.css("--s3"),
+      formatoY: G.fmtEurCorto, formatoValor: v => G.fmtEur(v, 0),
+    });
+    const pct = v => v != null ? G.fmtPct(v, 2) : "—";
+    $("#tablaDividendos").innerHTML =
+      `<thead><tr><th>Producto</th><th>Cobrado en total</th><th>Últimos 12 meses</th>
+        <th title="Lo cobrado en 12 meses entre lo que vale hoy">Sobre lo que vale</th>
+        <th title="Lo cobrado en 12 meses entre lo que pusiste (yield on cost)">Sobre lo que pusiste</th>
+        <th>Último cobro</th></tr></thead>
+       <tbody>${dv.porProducto.map(l => {
+        const p = buscaProd(l.id) || { corto: l.id };
+        return `<tr><td><i class="pt" style="background:${color(p)}"></i>${p.corto || p.nombre}</td>
+          <td>${G.fmtEur(l.total)}</td><td>${G.fmtEur(l.ultimos12)}</td>
+          <td>${pct(l.sobreValor)}</td><td>${pct(l.sobreCoste)}</td><td>${G.fmtFecha(l.ultimo)}</td></tr>`;
+      }).join("")}</tbody>`;
+  }
+
+  /* ---------------------------------------------- para la Renta (solo con la app abierta) */
+  const FISCAL = { ano: null, pidiendo: 0 };
+  const escH = s => String(s == null ? "" : s).replace(/[&<>"']/g,
+    c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+  async function pintaFiscal() {
+    const sec = $("#seccionFiscal");
+    if (!sec) return;
+    // En la web publicada no hay servidor (ni debe salir esto): solo en la app.
+    sec.hidden = !window.Editor;
+    if (sec.hidden) return;
+    const cont = $("#fiscal");
+    const n = ++FISCAL.pidiendo;
+    let j = {};
+    try {
+      const r = await fetch("api/fiscal" + (FISCAL.ano ? "?ano=" + encodeURIComponent(FISCAL.ano) : ""));
+      j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) throw new Error((j.errores || ["No he podido prepararlo."]).join(" "));
+    } catch (e) {
+      if (n !== FISCAL.pidiendo) return;
+      $("#fiscalAnos").innerHTML = "";
+      cont.innerHTML = `<p class="vacio" style="text-align:left;padding:4px 0">${escH(e.message)}</p>`;
+      return;
+    }
+    if (n !== FISCAL.pidiendo) return;   // ya se pidió otro año
+    FISCAL.ano = j.ano;
+    pintaSegm($("#fiscalAnos"), (j.anos.length ? j.anos : [j.ano]).slice(0, 6).map(a => ({ id: a, et: a })),
+      j.ano, id => { FISCAL.ano = id; pintaFiscal(); });
+    const t = j.totales;
+    const signo = v => `<span class="${v >= 0 ? "pos" : "neg"}">${G.fmtEurSigno(v)}</span>`;
+    const aviso = `<div class="fiscalAviso"><b>Orientativo, para repasar el borrador: no es asesoramiento fiscal.</b>
+      Ventas como Hacienda (FIFO; los traspasos entre fondos conservan coste y fecha). Rumbo no sabe tus retenciones ni tu
+      situación: compáralo con los datos fiscales de tu banco.</div>`;
+    if (!j.ventas.length && !j.cobros.length && !j.rescates.length && !j.comisiones.length && !j.gastosAlquiler.length) {
+      cont.innerHTML = aviso + `<p class="vacio" style="text-align:left;padding:4px 0">En ${escH(j.ano)} no anotaste
+        ventas, dividendos, intereses ni alquileres: no hay nada que declarar de tus inversiones ese año.</p>` +
+        j.avisos.map(a => `<div class="av"><span>⚠</span><span>${escH(a)}</span></div>`).join("");
+      return;
+    }
+    const nv = j.ventas.length;
+    const kpis = [{
+      e: "Ganancias y pérdidas", v: nv ? signo(t.saldo) : "—",
+      n: !nv ? "no vendiste nada este año"
+        : t.ganancias && t.perdidas ? `${G.fmtEurSigno(t.ganancias)} y ${G.fmtEurSigno(t.perdidas)}, en ${nv} ${nv === 1 ? "venta" : "ventas"}`
+          : `en ${nv} ${nv === 1 ? "venta" : "ventas"}`
+    }];
+    if (t.dividendos) kpis.push({ e: "Dividendos y cupones", v: G.fmtEur(t.dividendos), n: "como los anotaste (lo cobrado)" });
+    if (t.intereses) kpis.push({ e: "Intereses", v: G.fmtEur(t.intereses), n: "de cuentas y préstamos P2P, como los anotaste" });
+    if (t.alquileres || t.gastosAlquiler) kpis.push({ e: "Alquileres", v: G.fmtEur(t.alquileres),
+      n: t.gastosAlquiler ? `cobrados; ${G.fmtEur(t.gastosAlquiler)} de gastos anotados` : "cobrados, como los anotaste" });
+    if (t.comisiones) kpis.push({ e: "Comisiones aparte", v: G.fmtEur(t.comisiones), n: "custodia y otras, sin compra ni venta" });
+    const fechasCompra = v => {
+      const fs = [...new Set(v.compras.map(c => c.fecha))].sort();
+      if (!fs.length) return "—";
+      return fs.length === 1 ? G.fmtFecha(fs[0]) : `${G.fmtFecha(fs[0])} a ${G.fmtFecha(fs[fs.length - 1])} (${fs.length} compras)`;
+    };
+    const tablaVentas = j.ventas.length ? `<h3>Ventas</h3>
+      <div class="tablaEnv"><table class="dt"><thead><tr><th>Producto</th><th>Vendido el</th><th>Comprado el</th>
+        <th>Transmisión</th><th>Adquisición</th><th>Ganancia o pérdida</th></tr></thead>
+       <tbody>${j.ventas.map(v => `<tr>
+          <td>${escH(v.nombre)}<span class="fiscalRevisar">${v.isin ? escH(v.isin) + " · " : ""}${escH(v.tipo)}</span>
+            ${v.avisos.map(a => `<span class="fiscalRevisar">⚠ ${escH(a)}</span>`).join("")}</td>
+          <td>${G.fmtFecha(v.fecha)}</td><td>${fechasCompra(v)}</td>
+          <td>${G.fmtEur(v.transmision)}</td><td>${v.adquisicion != null ? G.fmtEur(v.adquisicion) : "—"}</td>
+          <td>${signo(v.ganancia)}</td></tr>`).join("")}</tbody>
+       <tfoot><tr><td>Total</td><td></td><td></td><td>${G.fmtEur(t.transmision)}</td><td>${G.fmtEur(t.adquisicion)}</td>
+         <td>${signo(t.saldo)}</td></tr></tfoot></table></div>` : "";
+    const tablaCobros = j.cobros.length ? `<h3>${j.cobros.some(x => x.clase === "Alquileres")
+      ? "Dividendos, cupones, intereses y alquileres" : "Dividendos, cupones e intereses"}</h3>
+      <div class="tablaEnv"><table class="dt"><thead><tr><th>Producto</th><th>Qué es</th><th>Cobros</th><th>Importe anotado</th></tr></thead>
+       <tbody>${j.cobros.map(x => `<tr><td>${escH(x.nombre)}</td><td>${escH(x.clase)}</td><td>${x.cobros}</td>
+         <td>${G.fmtEur(x.importe)}</td></tr>`).join("")}</tbody></table></div>` : "";
+    const tablaRescates = j.rescates.length ? `<h3>Rescates de planes de pensiones</h3>
+      <div class="tablaEnv"><table class="dt"><thead><tr><th>Plan</th><th>Fecha</th><th>Rescatado</th></tr></thead>
+       <tbody>${j.rescates.map(v => `<tr><td>${escH(v.nombre)}</td><td>${G.fmtFecha(v.fecha)}</td>
+         <td>${G.fmtEur(v.transmision)}</td></tr>`).join("")}</tbody></table></div>` : "";
+    cont.innerHTML = aviso +
+      `<div class="kpis" style="margin:6px 0 8px">${kpis.map(k =>
+        `<div class="kpi"><div class="e">${k.e}</div><div class="v">${k.v}</div><div class="n">${k.n}</div></div>`).join("")}</div>` +
+      j.avisos.map(a => `<div class="av"><span>⚠</span><span>${escH(a)}</span></div>`).join("") +
+      tablaVentas + tablaCobros + tablaRescates +
+      `<p style="margin:18px 0 0"><a class="btn" id="fiscalBajar">Descargar en Excel (CSV)</a></p>`;
+    const bajar = $("#fiscalBajar");
+    bajar.href = URL.createObjectURL(new Blob(["\ufeff" + j.csv], { type: "text/csv;charset=utf-8" }));
+    bajar.download = `rumbo_renta_${j.ano}.csv`;
   }
 
   /* ---------------------------------------------- avisos y pie */
@@ -1104,12 +1447,47 @@
   $("#metaFecha").textContent = "Datos a " + G.fmtFecha(D.fechaExtracto);
 
   $("#btnTema").onclick = () => { cambiaTema(); pintar(); };
+
+  // Moneda en la que se ven los importes del panel (en «Mis datos» todo va en euros).
+  const MONEDAS = D.monedas || {};
+  function aplicaMoneda() {
+    const m = MONEDAS[estado.moneda];
+    G.ponMoneda(m ? estado.moneda : "EUR", m ? m.porEuro : 1);
+    // Pesos chilenos o colombianos: cifras de muchos dígitos, un punto más pequeñas.
+    document.body.classList.toggle("monedaLarga", !!m && m.porEuro > 100);
+    const nota = $("#notaMoneda");
+    nota.hidden = !m;
+    if (m) {
+      nota.textContent = `Estás viendo los importes en ${m.nombre.toLowerCase()} (${estado.moneda}) al cambio del ` +
+        `${G.fmtFecha(m.fecha)}: 1 € = ${m.porEuro.toLocaleString("es-ES", { maximumFractionDigits: 4 })} ${G.moneda.simbolo}. ` +
+        "Rumbo calcula en euros: la TIR y las rentabilidades son las de tu dinero en euros, y en «Mis datos» todo va en euros.";
+    }
+  }
+  const selMoneda = $("#selMoneda");
+  if (selMoneda && Object.keys(MONEDAS).length) {
+    selMoneda.innerHTML = ["EUR", ...Object.keys(MONEDAS)].map(c => {
+      const s = G.simboloMoneda(c);
+      return `<option value="${c}" title="${c === "EUR" ? "Euros" : MONEDAS[c].nombre}">${s.length === 1 ? s + " " + c : c}</option>`;
+    }).join("");
+    if (!MONEDAS[estado.moneda]) estado.moneda = "EUR";
+    selMoneda.value = estado.moneda;
+    selMoneda.hidden = false;
+    selMoneda.onchange = () => {
+      estado.moneda = selMoneda.value;
+      recuerda.guarda("patrimonio.moneda", estado.moneda);
+      aplicaMoneda();
+      pintar();
+    };
+  }
+  aplicaMoneda();
+
   if ($("#btnPrecios")) $("#btnPrecios").onclick = async () => {
     const b = $("#btnPrecios");
     b.disabled = true;
     b.textContent = "↻ Actualizando…";
     try {
-      const r = await fetch("api/actualizar", { method: "POST" });
+      const r = await fetch("api/actualizar", { method: "POST",
+        headers: window.PERFILES && window.PERFILES.activo ? { "X-Rumbo-Perfil": window.PERFILES.activo } : {} });
       const j = await r.json();
       if (!j.ok) throw new Error(j.error);
       location.reload();

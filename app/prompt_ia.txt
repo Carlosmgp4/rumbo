@@ -7,8 +7,8 @@ Reglas para cada columna:
 - fecha: la fecha de la operación (o de ejecución), en formato AAAA-MM-DD.
 - identificador: el ISIN si aparece (12 caracteres, como IE00BYX5NX33); si no, el ticker (como AAPL). Para cuentas bancarias, déjalo vacío.
 - nombre: el nombre del producto o de la cuenta, tal y como aparece.
-- tipo_producto: una de estas palabras: fondo, etf, accion, cripto, commodity, bono, pension, efectivo, inmueble, deuda, otro.
-- tipo_movimiento: una de estas palabras: compra, venta, dividendo, comision, saldo. Usa «saldo» solo para el saldo de una cuenta en una fecha.
+- tipo_producto: una de estas palabras: fondo, etf, accion, cripto, commodity, bono, pension, efectivo, inmueble, deuda, p2p, otro.
+- tipo_movimiento: una de estas palabras: compra, venta, dividendo, comision, saldo, traspaso_salida, traspaso_entrada. Usa «saldo» solo para el saldo de una cuenta en una fecha. Un traspaso de un fondo (o plan de pensiones) a otro son DOS filas con la misma fecha y el mismo importe: traspaso_salida en el fondo de origen y traspaso_entrada en el de destino. No lo anotes como venta y compra.
 - unidades: participaciones, acciones o unidades compradas o vendidas, en positivo y con punto decimal. Déjalo vacío si no aparece.
 - importe: el dinero total de la operación, en positivo, con punto decimal y sin símbolo de moneda. En una compra, lo que salió de la cuenta con las comisiones incluidas; en una venta o un dividendo, lo que entró.
 - moneda: la moneda del importe (EUR, USD…).

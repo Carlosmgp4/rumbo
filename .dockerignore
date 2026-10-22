@@ -1,0 +1,13 @@
+# Lo que NO entra en la imagen de Docker: tus datos, entornos y lo que no hace falta para funcionar.
+mis_datos
+.venv
+.venv-pip
+.git
+.github
+tests
+docs
+**/__pycache__
+*.pyc
+*.tmp
+Iniciar.*
+BACKLOG_COMENTARIOS_E_ISSUES.md

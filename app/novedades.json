@@ -1,0 +1,23 @@
+{
+ "version": "2.0.0",
+ "titulo": "Rumbo 2.0",
+ "novedades": [
+  "Más segura: se abre con una llave que solo tiene tu navegador, ninguna otra web ni programa puede ver ni cambiar tus datos, y a internet solo salen códigos de producto, nunca cuánto tienes.",
+  "Traspasos entre fondos y planes de pensiones: el coste y la antigüedad pasan al nuevo, sin contar como venta.",
+  "Perfiles: la cartera de tu pareja o de tus hijos, cada una por separado, y «Todos juntos» para ver la suma.",
+  "Tu patrimonio en otra moneda: dólares, libras, francos suizos o pesos, al cambio de hoy (la TIR y las rentabilidades se siguen calculando en euros).",
+  "Dónde está tu dinero de verdad: tu reparto por países y sectores, sumando todos tus fondos.",
+  "Planes de pensiones con precio automático: búscalos por su nombre.",
+  "Tu reparto objetivo: por tipo de activo o por producto, con un interruptor para elegir qué cuenta; avisa cuando te desvías y te dice dónde meter la próxima aportación sin vender.",
+  "Liquidez y fondo de emergencia: cuánto tienes a mano, cuántos meses te cubre y cuánto te sobra para invertir.",
+  "Cuadrar participaciones con tu banco (por ejemplo, tras importar traspasos de MyInvestor).",
+  "Aportaciones periódicas: la de cada mes a tu fondo, con el precio de cada día, en un minuto. Y te avisa cuando toca la siguiente.",
+  "Para la Renta: tus ventas del año con su ganancia o pérdida (como Hacienda), dividendos e intereses, descargable en Excel.",
+  "Pisos alquilados con su rentabilidad neta, préstamos P2P y crowdfunding (Mintos, Urbanitae…) e intereses de cuentas remuneradas.",
+  "Ganancia total en cada producto (precio, ventas y dividendos) y lo ya cobrado en el panel, objetivo de patrimonio a tu medida, botón «Todas» para venderlo todo y periodo propio en la comparación con un indexado.",
+  "Rumbo en tu Escritorio con su icono: doble clic en «Crear acceso directo.bat» (en Mac y Linux, mira Ayuda).",
+  "Compartir mi mes: una imagen de tu mes para redes, con solo porcentajes, el logo y un QR. Y un informe para soporte en Ayuda.",
+  "Rumbo en Docker: para tenerla siempre encendida en un NAS, una Raspberry o un servidor de casa (mira el README)."
+ ],
+ "video": null
+}

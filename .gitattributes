@@ -1,3 +1,6 @@
 *.bat text eol=crlf
 *.command text eol=lf
+*.sh text eol=lf
 *.py text eol=lf
+# Los tests son para publicar versiones: no van en el ZIP que se descargan los usuarios.
+tests/ export-ignore

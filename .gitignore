@@ -7,3 +7,6 @@ mis_datos/
 __pycache__/
 *.pyc
 *.tmp
+
+# Documento interno (cita a usuarios por su nombre): no se publica
+BACKLOG_COMENTARIOS_E_ISSUES.md

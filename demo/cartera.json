@@ -1505,5 +1505,16 @@
   "activo": true,
   "importe": 100000,
   "etiqueta": "Proximo objetivo"
+ },
+ "objetivoReparto": {
+  "por": "clase",
+  "pesos": {
+   "Renta variable": 80,
+   "Planes de pensiones": 15,
+   "Criptoactivos": 5
+  },
+  "vigilar": 3,
+  "rebalancear": 5,
+  "conEfectivo": false
  }
 }

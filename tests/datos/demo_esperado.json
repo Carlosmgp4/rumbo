@@ -1,0 +1,30 @@
+{
+ "world": {
+  "movimientos": 31,
+  "unidades": 2280.161188,
+  "aportado": 27352.95,
+  "realizado": 0.0,
+  "comisiones": 0.0
+ },
+ "emergentes": {
+  "movimientos": 50,
+  "unidades": 816.360348,
+  "aportado": 6530.95,
+  "realizado": 0.0,
+  "comisiones": 0.0
+ },
+ "monetario": {
+  "movimientos": 10,
+  "unidades": 2.754082,
+  "aportado": 7038.74,
+  "realizado": 121.91,
+  "comisiones": 0.0
+ },
+ "bitcoin": {
+  "movimientos": 10,
+  "unidades": 211.0,
+  "aportado": 2857.88,
+  "realizado": 0.0,
+  "comisiones": 10.0
+ }
+}

@@ -10,15 +10,17 @@ import io
 from .importar import COLUMNAS
 
 TIPOS_PRODUCTO = ["fondo", "etf", "accion", "cripto", "commodity", "bono", "pension",
-                  "efectivo", "inmueble", "deuda", "otro"]
-TIPOS_MOVIMIENTO = ["compra", "venta", "dividendo", "comision", "saldo"]
+                  "efectivo", "inmueble", "deuda", "p2p", "otro"]
+TIPOS_MOVIMIENTO = ["compra", "venta", "dividendo", "comision", "saldo", "traspaso_salida", "traspaso_entrada", "ajuste"]
 
 EXPLICACION = [
     ("fecha", "Sí", "Día de la operación. Por ejemplo 10/03/2025."),
     ("identificador", "Casi siempre", "ISIN (IE00BYX5NX33) o ticker (AAPL, BTC-EUR). Vacío solo en cuentas y cosas sin precio en internet."),
     ("nombre", "Si no hay identificador", "Nombre del producto o de la cuenta. Sirve para reconocer las cuentas bancarias."),
-    ("tipo_producto", "No", "fondo, etf, accion, cripto, commodity, bono, pension, efectivo, inmueble, deuda u otro."),
-    ("tipo_movimiento", "Sí", "compra, venta, dividendo, comision o saldo (el saldo de una cuenta en esa fecha)."),
+    ("tipo_producto", "No", "fondo, etf, accion, cripto, commodity, bono, pension, efectivo, inmueble, deuda, p2p u otro."),
+    ("tipo_movimiento", "Sí", "compra, venta, dividendo, comision o saldo (el saldo de una cuenta en esa fecha). "
+                              "Un traspaso entre fondos son dos filas con la misma fecha e importe: traspaso_salida "
+                              "(el fondo de origen) y traspaso_entrada (el de destino)."),
     ("unidades", "Recomendado", "Participaciones, acciones u onzas. Si lo dejas vacío, se calculan con el precio de ese día."),
     ("importe", "Sí", "Dinero total. Compra: lo que salió de tu cuenta, con comisiones. Venta o dividendo: lo que entró."),
     ("moneda", "No", "Moneda del importe. Si no es EUR, se convierte con el cambio de ese día. Vacío = EUR."),
@@ -38,6 +40,31 @@ def csv_vacio():
     return (";".join(COLUMNAS) + "\n").encode("utf-8-sig")
 
 
+def _cabecera(hoja, columnas, anchos):
+    """Primera fila en azul, fija al bajar, y anchos de columna."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+    hoja.append(columnas)
+    for c in hoja[hoja.max_row]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="2A78D6")
+        c.alignment = Alignment(vertical="center")
+    for i, a in enumerate(anchos):
+        hoja.column_dimensions[chr(65 + i)].width = a
+    hoja.row_dimensions[1].height = 22
+    hoja.freeze_panes = "A2"
+
+
+def prepara(hoja, filas):
+    """Hoja con las columnas de la plantilla y esas filas."""
+    _cabecera(hoja, COLUMNAS, [13, 16, 28, 15, 17, 12, 12, 9, 11, 30])
+    for f in filas:
+        hoja.append(list(f))
+    for fila in hoja.iter_rows(min_row=2, max_row=max(hoja.max_row, 500)):
+        fila[0].number_format = "DD/MM/YYYY"
+        for c in fila[5:7] + fila[8:9]:
+            c.number_format = "#,##0.00######"
+
+
 def excel():
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -46,23 +73,6 @@ def excel():
     libro = Workbook()
     cab_estilo = dict(font=Font(bold=True, color="FFFFFF"), fill=PatternFill("solid", fgColor="2A78D6"),
                       alignment=Alignment(vertical="center"))
-    anchos = [13, 16, 28, 15, 17, 12, 12, 9, 11, 30]
-
-    def prepara(hoja, filas):
-        hoja.append(COLUMNAS)
-        for c in hoja[1]:
-            for k, v in cab_estilo.items():
-                setattr(c, k, v)
-        for i, a in enumerate(anchos):
-            hoja.column_dimensions[chr(65 + i)].width = a
-        hoja.row_dimensions[1].height = 22
-        hoja.freeze_panes = "A2"
-        for f in filas:
-            hoja.append(list(f))
-        for fila in hoja.iter_rows(min_row=2, max_row=max(hoja.max_row, 500)):
-            fila[0].number_format = "DD/MM/YYYY"
-            for c in fila[5:7] + fila[8:9]:
-                c.number_format = "#,##0.00######"
 
     hoja = libro.active
     hoja.title = "Movimientos"
@@ -95,6 +105,57 @@ def excel():
     for fila in ins.iter_rows(min_row=5):
         for c in fila:
             c.alignment = Alignment(wrap_text=True, vertical="top")
+
+    salida = io.BytesIO()
+    libro.save(salida)
+    return salida.getvalue()
+
+
+def mis_datos(cfg):
+    """
+    Toda tu cartera en un Excel. La hoja «Movimientos» tiene el formato de la
+    plantilla (compras, ventas, dividendos, comisiones y saldos), así que se puede
+    abrir en Excel o Google Sheets y también volver a importar. «Productos» lleva
+    la ficha de cada uno.
+    """
+    from openpyxl import Workbook
+
+    prods = {p["id"]: p for p in cfg.get("productos", [])}
+    fecha = lambda iso: dt.date.fromisoformat(iso)
+    filas = []
+    for m in cfg.get("movimientos", []):
+        p = prods.get(m.get("producto"), {})
+        if m.get("tipo") == "traspaso":
+            # Dos filas, como en la plantilla: la salida del origen y la entrada en el destino.
+            d = prods.get(m.get("destino"), {})
+            for prod_, tipo, u in ((p, "traspaso_salida", m.get("unidades")), (d, "traspaso_entrada", m.get("unidadesDestino"))):
+                filas.append((fecha(m["fecha"]), prod_.get("identificador") or prod_.get("codigo") or "",
+                              prod_.get("nombre", ""), prod_.get("tipo", ""), tipo, u or None, m.get("importe"),
+                              "EUR", None, m.get("nota", "")))
+            continue
+        filas.append((fecha(m["fecha"]), p.get("identificador") or p.get("codigo") or "", p.get("nombre", ""),
+                      p.get("tipo", ""), m.get("tipo"), m.get("unidades") or None, m.get("importe"), "EUR",
+                      m.get("comision") or None, m.get("nota", "")))
+    for v in cfg.get("valoraciones", []):
+        p = prods.get(v.get("producto"), {})
+        filas.append((fecha(v["fecha"]), p.get("identificador") or p.get("codigo") or "", p.get("nombre", ""),
+                      p.get("tipo", ""), "saldo", None, v.get("valor"), "EUR", None, ""))
+    filas.sort(key=lambda f: f[0])
+
+    libro = Workbook()
+    hoja = libro.active
+    hoja.title = "Movimientos"
+    prepara(hoja, filas)
+
+    ficha = libro.create_sheet("Productos")
+    _cabecera(ficha, ["Nombre", "Tipo", "Identificador", "Precio de", "Código", "Moneda", "Entidad",
+                      "Comisión anual", "Riesgo (1-7)"], [34, 12, 16, 14, 16, 9, 18, 15, 13])
+    fuentes = {"morningstar": "Morningstar", "yahoo": "Yahoo Finance", "coingecko": "CoinGecko", "manual": "A mano"}
+    for p in cfg.get("productos", []):
+        ficha.append([p.get("nombre", ""), p.get("tipo", ""), p.get("identificador", ""),
+                      fuentes.get(p.get("fuente"), p.get("fuente", "")), p.get("codigo", ""), p.get("moneda", "EUR"),
+                      p.get("entidad", ""), p.get("ter"), p.get("riesgo")])
+        ficha.cell(ficha.max_row, 8).number_format = "0.00%"
 
     salida = io.BytesIO()
     libro.save(salida)

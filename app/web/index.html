@@ -59,6 +59,7 @@ code{background:var(--sup2);padding:1px 6px;border-radius:5px;font-size:.9em}
   display:inline-flex;align-items:center;gap:7px;transition:.13s;
 }
 .btn:hover{background:var(--sup2);color:var(--tinta)}
+a.btn{text-decoration:none}
 .btn.act{background:var(--tinta);color:var(--plano);border-color:var(--tinta)}
 
 /* ============================ pestanas ============================ */
@@ -101,6 +102,7 @@ code{background:var(--sup2);padding:1px 6px;border-radius:5px;font-size:.9em}
 .tarjeta > header{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
 .tarjeta > header h2{font-size:15px;font-weight:650}
 .subt{color:var(--tinta3);font-size:12.5px;font-weight:400}
+.desglose{display:block;margin:-6px 0 16px;line-height:1.5}
 
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px;margin:30px 0 26px}
 .kpi{background:var(--sup);border:1px solid var(--borde);border-radius:12px;padding:14px 16px}
@@ -114,7 +116,7 @@ code{background:var(--sup2);padding:1px 6px;border-radius:5px;font-size:.9em}
 @media(max-width:900px){.rejilla2{grid-template-columns:1fr}}
 
 /* ============================ controles ============================ */
-.segm{display:inline-flex;background:var(--sup2);border:1px solid var(--borde);border-radius:9px;padding:2px}
+.segm{display:inline-flex;flex-wrap:wrap;max-width:100%;background:var(--sup2);border:1px solid var(--borde);border-radius:9px;padding:2px}
 .segm button{
   border:0;background:transparent;color:var(--tinta3);font:inherit;font-size:12.5px;
   padding:5px 11px;border-radius:7px;cursor:pointer;transition:.13s;white-space:nowrap;
@@ -165,6 +167,9 @@ code{background:var(--sup2);padding:1px 6px;border-radius:5px;font-size:.9em}
 .selFondo button:hover{color:var(--tinta);border-color:var(--tinta3)}
 .selFondo button[aria-pressed="true"]{background:var(--c);border-color:var(--c);color:#fff;font-weight:600}
 .selFondo button[aria-pressed="true"] i{background:rgba(255,255,255,.9)}
+.selFondo button.vendido:not([aria-pressed="true"]){opacity:.55;border-style:dashed}
+.selFondo button.vendido i{background:transparent;box-shadow:inset 0 0 0 1.5px var(--c)}
+.selFondo button.vendido[aria-pressed="true"] i{box-shadow:inset 0 0 0 1.5px #fff}
 
 .ficha{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:2px 20px;
   background:var(--sup2);border-radius:11px;padding:15px 17px;margin-bottom:16px}
@@ -203,6 +208,36 @@ code{background:var(--sup2);padding:1px 6px;border-radius:5px;font-size:.9em}
 .expo h3{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:var(--tinta3);margin-bottom:10px}
 .expoNota{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--tinta3)}
 .expoNota.viejo{color:var(--aviso)}
+.repDe{display:block;font-size:11.5px;font-weight:400;color:var(--tinta3);margin:1px 0 0 16px}
+.filaValor .repDe{margin-left:0}
+.filaRep{cursor:default}
+.onoffs{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:7px;font-weight:400}
+.onoff{display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;color:var(--tinta2);position:relative}
+.onoff input{position:absolute;opacity:0;width:0;height:0}
+.onoff .pista{width:30px;height:18px;border-radius:9px;background:var(--sup3);position:relative;flex:none;
+  transition:background .15s;box-shadow:inset 0 0 0 1px var(--borde)}
+.onoff .pista::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;
+  background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.35)}
+.onoff input:checked + .pista{background:var(--bien)}
+.onoff input:checked + .pista::after{left:14px}
+.onoff input:focus-visible + .pista{box-shadow:0 0 0 3px color-mix(in srgb,var(--s1) 30%,transparent)}
+.onoff .est{font-weight:700;font-size:10.5px;letter-spacing:.05em;color:var(--tinta3);min-width:26px}
+.onoff .est::before{content:"OFF"}
+.onoff input:checked ~ .est{color:var(--bien)}
+.onoff input:checked ~ .est::before{content:"ON"}
+.onoff.fuera .nmP{color:var(--tinta3);text-decoration:line-through}
+.filaRep.apagado .nm{color:var(--tinta3)}
+.estadoRep{display:inline-block;font-size:11.5px;font-weight:650;border-radius:6px;padding:2px 8px}
+.estadoRep.ok{color:var(--bien);background:color-mix(in srgb,var(--bien) 13%,transparent)}
+.estadoRep.vigilar{color:var(--aviso);background:color-mix(in srgb,var(--aviso) 15%,transparent)}
+.estadoRep.rebalancear{color:var(--mal);background:color-mix(in srgb,var(--mal) 13%,transparent)}
+.calcAporte{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:18px 0 10px;font-size:14px;color:var(--tinta2)}
+.calcAporte input{width:120px;font:inherit;font-size:14px;color:var(--tinta);background:var(--sup2);border:1px solid var(--borde);
+  border-radius:9px;height:36px;padding:0 10px;text-align:right}
+.sumaRep{font-weight:650}
+.sumaRep.mal{color:var(--mal)}
+.expoTitular{margin:-4px 0 18px;font-size:17px;color:var(--tinta2)}
+.expoTitular b{color:var(--tinta);font-size:22px;font-weight:700;letter-spacing:-.02em}
 
 /* ============================ tablas ============================ */
 .tablaEnv{overflow-x:auto;border-radius:11px;border:1px solid var(--borde)}
@@ -304,6 +339,13 @@ body.video .topFila,body.video #seccionTabla,body.video .pie,body.video #seccion
 .banner span{flex:1;min-width:240px;color:var(--tinta2)}
 .banner b{color:var(--tinta)}
 .aviso-legal{margin-top:10px;color:var(--tinta3);font-size:11.5px}
+.notaMoneda{margin:8px 0 0;padding:8px 12px;border-radius:9px;font-size:12.5px;color:var(--tinta2);
+  background:color-mix(in srgb,var(--s1) 9%,var(--sup2));border:1px solid color-mix(in srgb,var(--s1) 22%,transparent)}
+body.video .notaMoneda{display:none}
+body.monedaLarga .kpi .v{font-size:18px;white-space:nowrap}
+body.monedaLarga .chip .vl{font-size:15px}
+.selMoneda{appearance:none;-webkit-appearance:none;background-image:var(--flecha);background-repeat:no-repeat;
+  background-position:right 9px center;padding-right:26px;font-variant-numeric:tabular-nums}
 .btn:disabled{opacity:.55;cursor:progress}
 [hidden]{display:none !important}
 .btn.prim{background:var(--s1);border-color:transparent;color:#fff;font-weight:600}
@@ -375,6 +417,9 @@ table.dt td.nota{max-width:220px;overflow:hidden;text-overflow:ellipsis;text-ali
 .conSufijo{position:relative}
 .conSufijo input{padding-right:32px !important;text-align:right;font-variant-numeric:tabular-nums}
 .conSufijo > span{position:absolute;right:13px;top:50%;transform:translateY(-50%);color:var(--tinta3);font-size:14px;pointer-events:none}
+.conMoneda input{padding-right:84px !important}
+.mForm .conMoneda select{position:absolute;right:5px;top:5px;height:32px;width:auto;min-width:0;padding:0 26px 0 10px;
+  border-radius:8px;font-size:13px;color:var(--tinta2);background-color:var(--sup);background-position:right 9px center}
 
 .interruptor{display:flex;align-items:center;gap:14px;cursor:pointer;padding:13px 15px;border:1px solid var(--borde);
   border-radius:12px;background:var(--sup2)}
@@ -411,6 +456,8 @@ table.dt td.nota{max-width:220px;overflow:hidden;text-overflow:ellipsis;text-ali
   border-radius:12px;background:color-mix(in srgb,var(--s1) 9%,var(--sup2));font-size:12.5px;line-height:1.45;color:var(--tinta2)}
 .resumen b{font-size:16px;font-weight:680;color:var(--tinta);white-space:nowrap;font-variant-numeric:tabular-nums}
 .resumen b:empty{display:none}
+.resumen > span{flex:1 1 200px;min-width:0}
+@media (max-width:520px){.resumen{flex-wrap:wrap}}
 .ayuda{font-size:12.5px;color:var(--tinta3);margin:10px 0 0;line-height:1.5}
 .relleno{margin:14px 0 0;font-size:12.5px;color:var(--bien)}
 .cargando{font-size:13px;color:var(--tinta3);margin:4px 0}
@@ -582,6 +629,43 @@ body.video .tarjeta{padding:22px 24px}
 .compDetalles{margin-top:18px;border-top:1px solid var(--borde);padding-top:14px}
 .compDetalles summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--tinta2)}
 .compDetalles summary:hover{color:var(--tinta)}
+.conBoton{display:flex;gap:6px}
+.conBoton input{flex:1;min-width:0}
+.mForm .conBoton .btn{height:42px;border-radius:11px;flex:none}
+.pildoras.una{grid-template-columns:1fr}
+.progPie .editar{border:0;background:none;color:var(--s1);font:inherit;font-size:12.5px;cursor:pointer;padding:0 0 0 8px}
+.selPerfil{font-weight:600;color:var(--tinta);max-width:190px}
+body.video .selPerfil,body.video #bannerTodos,body.video #seccionFiscal,body.video #btnCompartir{display:none}
+.modal.cmpModal{width:min(760px,calc(100vw - 24px))}
+.lotesTraspaso{display:grid;gap:10px;margin-top:12px}
+.loteTraspaso{display:flex;flex-wrap:wrap;align-items:flex-end;gap:10px 16px;padding:10px 12px;border:1px solid var(--borde);border-radius:11px}
+.loteTraspaso .loteEtq{flex:1 1 100%;font-size:13.5px;font-weight:600}
+.loteTraspaso .campo{display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--tinta2)}
+.loteTraspaso .noSe{display:flex;align-items:center;gap:7px;font-size:13.5px;cursor:pointer;padding-bottom:9px}
+.marcaTraspaso{stroke:var(--tinta3);stroke-width:1.2;stroke-dasharray:3 4;opacity:.7}
+.marcaBola{cursor:pointer;outline:none}
+.marcaBola circle:first-child{fill:var(--sup);stroke:var(--tinta2);stroke-width:1.5;transition:fill .15s,stroke .15s}
+.marcaBola .marcaBolaIcono{font-size:12px;font-weight:700;fill:var(--tinta);pointer-events:none}
+.marcaBola .marcaBolaPunto{fill:var(--aviso);stroke:var(--sup);stroke-width:1.5}
+.marcaBola:hover circle:first-child,.marcaBola.activa circle:first-child,.marcaBola:focus-visible circle:first-child{fill:var(--tinta);stroke:var(--tinta)}
+.marcaBola:hover .marcaBolaIcono,.marcaBola.activa .marcaBolaIcono,.marcaBola:focus-visible .marcaBolaIcono{fill:var(--sup)}
+.gtt.ttMarca{min-width:230px}
+.gtt .ttNota{font-size:12px;color:var(--tinta3);margin-top:7px;line-height:1.4;max-width:260px}
+.gtt .ttEstimada{font-size:10.5px;font-weight:700;color:var(--aviso);border:1px solid var(--aviso);border-radius:999px;padding:0 6px;margin-left:4px}
+.cmpOpciones{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.cmpOpciones select{width:auto;min-width:150px}
+.cmpEuros{display:flex;align-items:center;gap:7px;font-size:14px;cursor:pointer}
+.cmpLienzo{display:block;max-width:100%;max-height:min(58vh,620px);width:auto;height:auto;margin:16px auto 10px;
+  border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+.fiscalAviso{background:var(--sup2);border-radius:10px;padding:12px 14px;margin:0 0 18px;
+  font-size:13px;line-height:1.5;color:var(--tinta2)}
+.fiscalAviso b{color:var(--tinta)}
+.fiscalRevisar{display:block;color:var(--tinta3);font-size:12px;line-height:1.4;margin-top:4px;white-space:normal}
+#seccionFiscal h3{font-size:15px;margin:22px 0 8px}
+.perfilFila{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 0;border-bottom:1px solid var(--borde)}
+.perfilFila small{color:var(--tinta3)}
+.listaNovedades{margin:10px 0 4px;padding-left:20px;line-height:1.6;color:var(--tinta2)}
+.listaNovedades li{margin-bottom:5px}
 /* ---- Canal del autor ---- */
 .ayudaVideo{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
 .ayudaVideo > div:first-child{flex:1;min-width:260px}
@@ -618,9 +702,12 @@ body.video .tarjetaCanal{display:none}
   <div class="env">
     <div class="topFila">
       <div class="marca"><img class="logoIcono" src="icono-64.png" alt="" width="24" height="24"><span class="nombreApp">Rumbo</span><span class="marcaSep"></span><span id="marcaTexto">Mi patrimonio</span></div>
+      <select class="btn selMoneda selPerfil" id="selPerfil" aria-label="Perfil" title="Cambiar de perfil: tu cartera, la de tu pareja, la de tus hijos…" hidden></select>
       <div class="sep"></div>
       <span class="meta" id="metaFecha"></span>
       <button class="btn" id="btnPrecios" title="Descarga los precios de hoy de cada producto">↻ Actualizar precios</button>
+      <select class="btn selMoneda" id="selMoneda" aria-label="Moneda en la que ver los importes"
+        title="Ver los importes en otra moneda, al cambio de hoy" hidden></select>
       <button class="btn" id="btnTema" title="Cambiar entre claro y oscuro">◐ Tema</button>
       <button class="btn" id="btnVideo" title="Oculta los controles y agranda las cifras">▶ Modo vídeo</button>
     </div>
@@ -638,6 +725,7 @@ body.video .tarjetaCanal{display:none}
 <div class="env">
 
 <div class="banner" id="bannerVersion" hidden><span id="bannerVersionTexto"></span></div>
+<div class="banner" id="bannerTodos" hidden><span id="bannerTodosTexto"></span></div>
 <div class="banner" id="bannerDemo" hidden>
   <span><b>Estás viendo una cartera de ejemplo:</b> es la cartera real de <span class="autorCanal"></span>,
   que cada mes cuenta cómo evoluciona en su <a class="enlaceCanal" target="_blank" rel="noopener">canal de YouTube</a>.
@@ -645,6 +733,7 @@ body.video .tarjetaCanal{display:none}
   <button class="btn prim" id="btnEmpezar">Empezar con mis datos</button>
 </div>
 <p class="aviso-legal">Herramienta informativa. No es asesoramiento financiero. No se garantiza la exactitud de los datos ni de los precios.</p>
+<p class="notaMoneda" id="notaMoneda" hidden></p>
 
 <!-- ==================================================== PATRIMONIO -->
 <div class="panel" id="tab-patrimonio" role="tabpanel">
@@ -697,6 +786,39 @@ body.video .tarjetaCanal{display:none}
       <div class="envGraf" id="grafBarras"></div>
     </section>
   </div>
+
+  <section class="tarjeta" id="seccionExpo" style="margin-top:16px" hidden>
+    <header>
+      <h2>Dónde está tu dinero de verdad</h2>
+      <span class="subt" id="expoTotNota"></span>
+    </header>
+    <p class="expoTitular" id="expoTotTitular"></p>
+    <div class="expo">
+      <div><h3>Por país</h3><div class="envGraf" id="expoTotPaises"></div></div>
+      <div><h3>Por sector</h3><div class="envGraf" id="expoTotSectores"></div></div>
+    </div>
+    <p class="subt" id="expoTotPie" style="margin:16px 0 0"></p>
+  </section>
+
+  <section class="tarjeta" id="seccionLiquidez" style="margin-top:16px" hidden>
+    <header>
+      <h2>Liquidez y fondo de emergencia</h2>
+      <span class="subt" id="liqNota"></span>
+      <div class="sep"></div>
+      <button class="btn" id="btnColchon" hidden>Cambiar</button>
+    </header>
+    <div id="liqCuerpo"></div>
+  </section>
+
+  <section class="tarjeta" id="seccionReparto" style="margin-top:16px" hidden>
+    <header>
+      <h2>Mi reparto objetivo</h2>
+      <span class="subt" id="repartoNota"></span>
+      <div class="sep"></div>
+      <button class="btn" id="btnReparto" hidden>Cambiar</button>
+    </header>
+    <div id="repartoCuerpo"></div>
+  </section>
 
   <section class="tarjeta" style="margin-top:16px">
     <header><h2>Hitos</h2><span class="subt">La primera vez que el patrimonio cruzó cada cifra</span></header>
@@ -786,6 +908,7 @@ body.video .tarjetaCanal{display:none}
       <div class="segm" id="compRef"></div>
     </header>
     <div class="compTitular" id="compTitular"></div>
+    <div class="filaTabla" style="margin:0 0 8px"><span class="subt">Periodo del gráfico</span><div class="segm" id="compRango"></div></div>
     <div class="envGraf" id="grafComparacion"></div>
     <p class="subt" id="compNota" style="margin:10px 0 0"></p>
     <details class="compDetalles" id="compDetalles">
@@ -797,9 +920,24 @@ body.video .tarjetaCanal{display:none}
     </details>
   </section>
 
+  <section class="tarjeta" id="seccionDividendos">
+    <header><h2>Dividendos, cupones e intereses</h2><span class="subt" id="notaDividendos"></span></header>
+    <div id="dividendos"></div>
+  </section>
+
   <section class="tarjeta">
     <header><h2>Lo que pagas en comisiones</h2><span class="subt" id="notaComisiones"></span></header>
     <div class="tablaEnv"><table class="dt" id="tablaComisiones"></table></div>
+  </section>
+
+  <section class="tarjeta" id="seccionFiscal" hidden>
+    <header>
+      <h2>Para la Renta</h2>
+      <span class="subt">Lo que vendiste y cobraste en un año, para repasar el borrador</span>
+      <span class="sp"></span>
+      <div class="segm" id="fiscalAnos"></div>
+    </header>
+    <div id="fiscal"></div>
   </section>
 </div>
 
@@ -823,7 +961,9 @@ body.video .tarjetaCanal{display:none}
         <li><b>Busca por ISIN</b> (12 caracteres, como <code>IE00BYX5NX33</code>). Lo tienes en la ficha del producto en tu banco. Es la forma más fiable, sobre todo para fondos.</li>
         <li>Para acciones y ETF, prueba el <b>ticker con la bolsa</b>: <code>SAN.MC</code> (Madrid), <code>IWDA.AS</code> (Ámsterdam), <code>EUNL.DE</code> (Xetra), <code>AAPL</code> (EE. UU.).</li>
         <li>Para criptomonedas, escribe su nombre en inglés (<code>bitcoin</code>, <code>ethereum</code>).</li>
-        <li>Si no cotiza en ningún sitio (un plan de pensiones, un depósito, oro físico, un piso), créalo igualmente y elige <b>«Valor anotado a mano»</b> como fuente del precio. Luego anota su valor de vez en cuando en «Saldos y valores».</li>
+        <li><b>Planes de pensiones</b>: escribe su nombre (<code>MyInvestor Indexado Global</code>, <code>Indexa Más Rentabilidad Acciones</code>). Los que están en Morningstar salen con su precio y se actualizan solos.
+          ¿Ya lo tenías anotado a mano? Puedes dejarlo así o pasarlo a automático: crea el plan con el buscador y haz un <b>traspaso</b> desde el antiguo con fecha de hoy, marcando «Lo traspaso todo» y poniendo las participaciones que tienes hoy. Lo aportado pasa al plan nuevo y la curva de antes se conserva.</li>
+        <li>Si no cotiza en ningún sitio (un depósito, oro físico, un piso, un plan que no aparece), créalo igualmente y elige <b>«Valor anotado a mano»</b> como fuente del precio. Luego anota su valor de vez en cuando en «Saldos y valores».</li>
       </ol></div></details>
 
     <details class="faq"><summary>El valor no coincide con el que veo en mi banco</summary><div>
@@ -840,7 +980,9 @@ body.video .tarjetaCanal{display:none}
       <p>La app actualiza los precios al abrirse si tienen más de 6 horas, y cuando pulsas <b>«↻ Actualizar precios»</b>. Si una fuente no responde, usa el último precio guardado y te avisa.</p></div></details>
 
     <details class="faq"><summary>¿Mis datos salen de mi ordenador?</summary><div>
-      <p>No. Todo se guarda en la carpeta <code>mis_datos</code>, dentro de la carpeta de la app. No hay cuentas, ni servidores, ni nadie más que los vea. La app solo sale a internet para descargar precios, y en esas consultas no va ningún dato tuyo.</p></div></details>
+      <p>No. Todo se guarda en la carpeta <code>mis_datos</code>, dentro de la carpeta de la app. No hay cuentas, ni servidores, ni nadie más que los vea. La app solo sale a internet para descargar precios y el reparto de tus fondos, y en esas consultas no va ningún dato tuyo.</p>
+      <p>A internet solo salen <b>códigos de producto</b> (ISIN o ticker) para pedir precios y el reparto por países, y lo que escribes en el buscador. Nunca cuánto tienes, cuánto has puesto ni el total de tu patrimonio.</p>
+      <p>Y desde la 2.0, la app se abre con una <b>llave de acceso</b> que solo tiene el navegador que abrió el lanzador: ninguna otra web, otro programa ni otro usuario del ordenador puede ver ni cambiar tus datos. Por eso, si cierras la pestaña, vuelve a abrirla con el lanzador.</p></div></details>
 
     <details class="faq"><summary>¿Cómo meto mi cuenta del banco, un plan de pensiones o un piso?</summary><div>
       <ol>
@@ -849,11 +991,108 @@ body.video .tarjetaCanal{display:none}
         <li>Si sabes cuánto llevas aportado (por ejemplo, a un plan de pensiones), anótalo también: así el panel calcula su rentabilidad.</li>
       </ol></div></details>
 
+    <details class="faq"><summary>¿Puedo llevar la cartera de mi pareja o de mis hijos?</summary><div>
+      <p>Sí: arriba, junto al logo, está el selector de perfiles. Elige <b>«+ Añadir un perfil»</b>, ponle un nombre y tendrás una
+        cartera aparte, con sus productos, movimientos, copias e importaciones. Cuando haya dos perfiles con datos, aparece
+        <b>«Todos juntos»</b>: la suma de todos, solo para mirar.</p>
+      <p>Los perfiles se guardan dentro de <code>mis_datos</code> (en <code>mis_datos/perfiles</code>): al actualizar o cambiar de
+        ordenador, copiando <code>mis_datos</code> te los llevas todos.</p></div></details>
+
+    <details class="faq"><summary>¿Cómo veo en qué países y sectores está mi dinero?</summary><div>
+      <p>En la pestaña <b>Patrimonio</b>, «Dónde está tu dinero de verdad» suma el reparto de todos tus fondos, ETF, planes y
+        acciones según lo que vale cada uno. Los datos son de Morningstar, sobre la cartera que publica cada fondo, y se
+        refrescan como mucho una vez al mes.</p>
+      <p>Si tienes un plan o una cartera gestionada que no cotiza, en su ficha (<b>Mis datos → Productos → Editar → opciones
+        avanzadas</b>) escribe en «Reparto como el de» el ISIN de un fondo que invierta en lo mismo.</p></div></details>
+
+    <details class="faq"><summary>¿Tengo suficiente colchón? (liquidez y fondo de emergencia)</summary><div>
+      <p>En <b>Patrimonio → Liquidez y fondo de emergencia</b> ves cuánto tienes disponible en días (cuentas y fondos
+        monetarios) y, si dices cuántos meses de gastos quieres tener a mano, cuántos te cubre y cuánto te sobra para
+        invertir. Para que un producto cuente o deje de contar, en su ficha: <b>«Cuenta como liquidez»</b>.</p></div></details>
+
+    <details class="faq"><summary>¿Cómo sé si tengo que rebalancear?</summary><div>
+      <p>En <b>Patrimonio → Mi reparto objetivo</b> dices qué porcentaje quieres en cada tipo de activo (renta variable, renta fija, monetario, efectivo…)
+        o en cada producto (por ejemplo, 80 % al fondo del mundo y 20 % al de emergentes). Cuenta lo invertido a largo
+        plazo; tus cuentas, solo si les pones un %. En «Qué productos cuentan» puedes quitar o meter cada producto a mano
+        (sigue en tu patrimonio; solo sale del reparto). Rumbo te enseña cuánto te has desviado, un semáforo (OK, vigilar, rebalancear) y, con <b>«Voy a aportar…»</b>, cómo
+        repartir tu próxima aportación para volver a cuadrar sin vender nada. Es una herramienta para pensar, no una
+        recomendación.</p></div></details>
+
+    <details class="faq"><summary>Las participaciones no coinciden con las de mi banco</summary><div>
+      <p>Pasa sobre todo con traspasos importados de MyInvestor, porque su extracto no trae las participaciones. En
+        <b>Mis datos → Movimientos → «Cuadrar participaciones»</b> escribe las que ves en tu banco: Rumbo las fija desde
+        esa fecha sin cambiar lo que pagaste.</p></div></details>
+
     <details class="faq"><summary>¿Qué es la TIR y por qué no coincide con la rentabilidad?</summary><div>
       <p>La <b>rentabilidad</b> compara lo que vale tu cartera con lo que has metido, sin mirar cuándo lo metiste. La <b>TIR</b> (tasa interna de rentabilidad) sí tiene en cuenta cuándo entró y salió cada euro, y lo expresa como un porcentaje anual. Si aportas poco a poco, la TIR es la cifra honesta para compararte con un depósito o con un índice.</p></div></details>
 
+    <details class="faq"><summary>¿Puedo compartir cómo me ha ido el mes sin decir cuánto tengo?</summary><div>
+      <p>Sí: en la pestaña <b>El mes</b>, pulsa <b>«Compartir mi mes»</b>. Eliges el formato (Mini, Resumen o Story), el tema (oscuro, claro o azul) y el mes,
+        y Rumbo prepara una imagen con la rentabilidad, cómo vas en el año, la curva, el logo y un QR. Por defecto solo salen
+        porcentajes; en el Resumen puedes marcar «Mostrar euros». La imagen se hace en tu ordenador: la descargas o la
+        copias y la pegas donde quieras.</p></div></details>
+
+    <details class="faq"><summary>Aporto lo mismo cada mes: ¿tengo que anotarlas una a una?</summary><div>
+      <p>No: <b>Mis datos → Movimientos → «↻ Periódica»</b>. Eliges el producto, cuánto, qué día del mes y desde cuándo, y
+        Rumbo prepara una compra por mes con el precio de cierre de ese día. Antes de guardar ves la lista, y las que ya
+        tengas anotadas se saltan.</p>
+      <p>Son <b>estimadas</b>: tu banco puede ejecutarlas otro día o a otro precio. Si quieres que cuadren al céntimo,
+        corrígelas después con lo que diga tu banco (o impórtalas de su extracto). Rumbo se acuerda de la aportación y,
+        cuando toca la siguiente, te avisa en Movimientos.</p></div></details>
+
+    <details class="faq"><summary>Tengo un piso alquilado: ¿cómo lo anoto?</summary><div>
+      <p>Crea el piso en <b>Mis datos → Productos</b> (tipo «Inmueble», valor anotado a mano) y anota lo que vale de vez en
+        cuando en <b>Saldos y valores</b>. En su tarjeta, <b>«+ Alquiler»</b> para lo que te paga el inquilino (cada mes o
+        sumado por año) y <b>«+ Gasto»</b> para comunidad, IBI, seguro, reparaciones…</p>
+      <p>En su ficha (pestaña <b>Productos</b>) verás el alquiler neto de los últimos 12 meses y su rentabilidad bruta y neta
+        sobre lo que vale hoy, y en «Ganancia total», lo que ha subido más lo que te ha rentado. Si tienes hipoteca, anótala
+        aparte como «Deuda / préstamo» para que tu patrimonio sea el neto.</p></div></details>
+
+    <details class="faq"><summary>¿Cómo anoto Mintos, Urbanitae u otro P2P o crowdfunding?</summary><div>
+      <p>En <b>Mis datos → Productos</b>, añade uno de tipo <b>«Préstamos P2P / crowdfunding»</b> con «Valor anotado a mano».
+        Lo que metes y sacas, como compras y ventas (sin unidades); lo que te pagan, con <b>«+ Intereses»</b> en su tarjeta de
+        Saldos y valores; y de vez en cuando anota lo que vale tu cuenta en la plataforma. Rumbo calcula su rentabilidad y su TIR,
+        y lo cuenta aparte de la bolsa. Si un préstamo entra en impago, baja su valor anotado.</p></div></details>
+
+    <details class="faq"><summary>¿Me ayuda con la declaración de la Renta?</summary><div>
+      <p>En <b>Rendimiento → «Para la Renta»</b>, elige el año y verás cada venta con su <b>valor de transmisión</b> (lo
+        que cobraste), su <b>valor de adquisición</b> (lo que te costó, con comisiones) y la ganancia o pérdida, calculado
+        como Hacienda: lo primero que compraste es lo primero que vendes, y los traspasos entre fondos conservan el coste
+        y la fecha de compra. También los dividendos, cupones e intereses del año, y un botón para descargarlo en Excel.</p>
+      <p>Es <b>orientativo</b>, para repasar el borrador: no es asesoramiento fiscal. Rumbo no sabe las retenciones que
+        te hicieron ni tu situación, y Hacienda ya tiene casi todo esto en tus datos fiscales. Te avisa de lo que conviene
+        mirar a mano: pérdidas con recompras cerca (la regla de los dos meses), traspasos que no son entre fondos y ventas
+        sin coste anotado. Los rescates de planes de pensiones van aparte (son rendimiento del trabajo).</p></div></details>
+
+    <details class="faq"><summary>¿La rentabilidad cuenta los dividendos y lo que ya vendí?</summary><div>
+      <p>En la ficha de cada producto (pestaña <b>Productos</b>) tienes tres cifras:</p>
+      <ul>
+        <li><b>Plusvalía</b>: solo lo que ganas con lo que aún tienes, por el precio. No cuenta lo cobrado.</li>
+        <li><b>Ganancia total</b>: la plusvalía más lo que ya ganaste en ventas, más los dividendos e intereses, menos
+          las comisiones que pagaste aparte. Debajo verás de dónde sale cada parte. Su % es sobre todo lo que has llegado a
+          invertir en ese producto (lo que tienes y lo que vendiste, a lo que te costó).</li>
+        <li><b>TIR</b>: lo cuenta todo y además cuándo entró y salió cada euro, en % al año.</li>
+      </ul>
+      <p>Las ventas se calculan como en Hacienda: lo primero que compraste es lo primero que vendes (FIFO). Lo cobrado
+        de toda la cartera lo tienes también en el panel, bajo tu patrimonio («ya cobrados en ventas y dividendos»).</p></div></details>
+
+    <details class="faq"><summary>Compré en dólares (o en otra moneda). ¿Cómo lo anoto?</summary><div>
+      <p>Al añadir el movimiento, elige la moneda en el desplegable que hay junto al importe (por ejemplo, <b>$ USD</b>) y escribe lo que pagaste. Rumbo lo pasa a euros con el cambio de ese día y apunta en la nota lo que pagaste en dólares. Los precios de acciones o ETF que cotizan en otra moneda también se pasan a euros solos.</p></div></details>
+
+    <details class="faq"><summary>¿Puedo ver el panel en dólares u otra moneda?</summary><div>
+      <p>Sí: con el desplegable <b>«€ EUR»</b> de arriba ves todos los importes en dólares, libras, francos suizos o pesos (mexicanos, argentinos, chilenos o colombianos), al cambio de hoy. Rumbo sigue calculando en euros, así que la TIR y las rentabilidades son las de tu dinero en euros, y en «Mis datos» todo va en euros.</p></div></details>
+
+    <details class="faq"><summary>Hice un traspaso de un fondo a otro</summary><div>
+      <p>En <b>Mis datos → Movimientos</b>, pulsa <b>«⇄ Traspaso»</b>: eliges de qué fondo (o plan de pensiones) sale, a cuál va, la fecha y las participaciones que salen (con <b>«Todas»</b> si lo traspasas entero). Rumbo rellena solo el importe y las participaciones que entran con el precio de ese día; corrígelas con las de tu banco si no coinciden.</p>
+      <p>No cuenta como una venta: lo que habías pagado y la fecha de cada compra pasan al fondo nuevo, igual que hace Hacienda. Tampoco cuenta como dinero nuevo en tus aportaciones. Si es un plan que valoras a mano, marca «Lo traspaso todo» y el antiguo se queda a cero ese día.</p>
+      <p>Si importas el extracto de MyInvestor, Rumbo reconoce los lotes que vienen de un traspaso (conservan la fecha y el coste del fondo antiguo) y en la vista previa te pregunta <b>de qué fondo venían y qué día fue</b>. Si ese fondo está en Rumbo, elígelo y pon la fecha de cada lote: se convierte en un traspaso de verdad, el dinero no cuenta dos veces y en la gráfica de los dos fondos verás una marca ese día. Si no sabes la fecha (está en el historial de órdenes de MyInvestor), marca «No la sé» y Rumbo la estima y la marca como estimada. Si el fondo no está en Rumbo, se importan como compras. Rumbo recuerda tu respuesta para la próxima vez.</p>
+      <p>En la plantilla, un traspaso son dos filas: <code>traspaso_salida</code> y <code>traspaso_entrada</code>. Si las participaciones no cuadran con tu banco, usa <b>Movimientos → «Cuadrar participaciones»</b>.</p></div></details>
+
+    <details class="faq"><summary>Vendí algo del todo. ¿Por qué ya no sale en el panel?</summary><div>
+      <p>Lo que ya no tienes se oculta del panel principal para que no ocupe sitio con 0 €, pero sigue contando en la historia, la TIR y lo que has ganado. Para verlo, pulsa <b>«Vendidos»</b> encima del gráfico. En la pestaña «Productos» aparece al final, en gris.</p></div></details>
+
     <details class="faq"><summary>He borrado o cambiado algo sin querer</summary><div>
-      <p>Antes de cada cambio, la app guarda una copia automática (las últimas 20). Ve a <b>Mis datos → Copias y web</b> y pulsa <b>«Recuperar»</b> en la copia de antes del error.</p></div></details>
+      <p>Antes de cada cambio, la app guarda una copia automática (las últimas 20). Ve a <b>Mis datos → Copias y exportar</b> y pulsa <b>«Recuperar»</b> en la copia de antes del error.</p></div></details>
 
     <details class="faq"><summary>¿Cómo actualizo a una versión nueva sin perder mis datos?</summary><div>
       <ol>
@@ -862,10 +1101,13 @@ body.video .tarjetaCanal{display:none}
         <li>Copia tu carpeta <code>mis_datos</code> de la versión antigua a la nueva (o copia todo lo nuevo encima de lo viejo, menos <code>mis_datos</code>).</li>
         <li>Abre la app con «Iniciar» como siempre.</li>
       </ol>
-      <p>Por si acaso, antes descarga una copia en <b>Mis datos → Copias y web</b>.</p></div></details>
+      <p>Por si acaso, antes descarga una copia en <b>Mis datos → Copias y exportar</b>.</p></div></details>
+
+    <details class="faq"><summary>¿Puedo sacar mis datos a Excel?</summary><div>
+      <p>Sí: <b>Mis datos → Copias y exportar → Descargar en Excel</b>. Tienes todos tus movimientos y saldos, y una hoja con la ficha de cada producto. La hoja «Movimientos» tiene el formato de la plantilla de importación, así que puedes cambiarla y volver a importarla.</p></div></details>
 
     <details class="faq"><summary>¿Cómo lo paso a otro ordenador?</summary><div>
-      <p>En el ordenador viejo, <b>Mis datos → Copias y web → Descargar copia</b>. En el nuevo, instala la app, ábrela y, en ese mismo sitio, sube el archivo con <b>«Recuperar desde un archivo»</b>. También vale copiar la carpeta <code>mis_datos</code> entera.</p></div></details>
+      <p>En el ordenador viejo, <b>Mis datos → Copias y exportar → Descargar copia</b>. En el nuevo, instala la app, ábrela y, en ese mismo sitio, sube el archivo con <b>«Recuperar desde un archivo»</b>. También vale copiar la carpeta <code>mis_datos</code> entera.</p></div></details>
 
     <details class="faq"><summary>Windows o Mac me dicen que el archivo puede ser peligroso</summary><div>
       <p>Pasa con cualquier archivo descargado de internet que no viene de una tienda de apps. <code>Iniciar.bat</code> e <code>Iniciar.command</code> son texto plano: puedes abrirlos con el Bloc de notas o TextEdit y leer todo lo que hacen.</p>
@@ -873,6 +1115,23 @@ body.video .tarjetaCanal{display:none}
         <li><b>Windows</b>: en el aviso azul, pulsa «Más información» y luego «Ejecutar de todas formas».</li>
         <li><b>Mac</b>: la primera vez, clic derecho sobre <code>Iniciar.command</code> → «Abrir» → «Abrir».</li>
       </ul></div></details>
+
+    <details class="faq"><summary>¿Puedo tener Rumbo en el Escritorio con su icono?</summary><div>
+      <ul>
+        <li><b>Windows</b>: en la carpeta de la app, doble clic en <code>Crear acceso directo.bat</code>. Aparece «Rumbo» en tu Escritorio.</li>
+        <li><b>Mac</b>: arrastra <code>Iniciar.command</code> al Dock, o clic derecho → «Crear alias» y deja el alias en el Escritorio.</li>
+        <li><b>Linux</b>: ejecuta una vez <code>bash crear-acceso-directo.sh</code> y lo tendrás en el menú de aplicaciones.</li>
+      </ul>
+      <p>El icono abre el lanzador de siempre, con tu llave de acceso. Si mueves la carpeta de la app, vuelve a crearlo.</p></div></details>
+
+    <details class="faq"><summary>Mi banco o bróker no se puede importar directamente</summary><div>
+      <p>Usa la <b>plantilla</b> o la opción <b>«Con ayuda de una IA»</b> de Mis datos → Importar: sirven para cualquier banco o bróker.</p></div></details>
+
+    <details class="faq"><summary>Algo no funciona: ¿cómo pido ayuda?</summary><div>
+      <p>Pulsa este botón y pega lo que copia en un <a href="https://github.com/danidm98/rumbo/issues" target="_blank" rel="noopener">issue de GitHub</a>
+        junto con lo que estabas haciendo. Lleva la versión, tu sistema, cuántos productos y movimientos tienes y los
+        últimos errores técnicos: <b>no lleva importes ni tus datos personales</b>. Léelo antes de pegarlo.</p>
+      <p><button class="btn prim" id="btnDiagnostico">Copiar informe para soporte</button></p></div></details>
 
     <p class="ayudaPie" id="ayudaVersion">¿Otra duda? Mira la página del proyecto en GitHub.</p>
   </section>
@@ -892,7 +1151,7 @@ body.video .tarjetaCanal{display:none}
   // Con file:// no se puede anadir "?v=": algunos navegadores no encuentran
   // el archivo. Ahi basta con la revalidacion por fecha de modificacion.
   var sello = location.protocol === "file:" ? "" : "?v=" + Date.now();
-  ["datos.js", "canal.js", "graficos.js", "app.js", "editor.js"].forEach(function (archivo) {
+  ["datos.js", "canal.js", "graficos.js", "calculos.js", "app.js", "editor.js", "compartir.js"].forEach(function (archivo) {
     var s = document.createElement("script");
     s.src = archivo + sello;
     s.async = false;

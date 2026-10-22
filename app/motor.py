@@ -15,10 +15,13 @@ import math
 import os
 import re
 import sys
+import time
 import urllib.parse
 import urllib.request
 import datetime as dt
 from collections import defaultdict
+
+from . import red
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -108,19 +111,28 @@ def descargar_serie(simbolo, anos=None):
     if SIN_RED or (SOLO_FALTAN and previo):
         return previo
 
+    # Se pide por fechas (period1/period2): con range=max Yahoo devuelve un dato al mes
+    # o al trimestre aunque se le pida interval=1d.
+    desde = int(time.time()) - anos * 365 * 86400 if anos else 0
     url = ("https://query1.finance.yahoo.com/v8/finance/chart/"
-           f"{urllib.parse.quote(simbolo)}?range={f'{anos}y' if anos else 'max'}&interval=1d")
+           f"{urllib.parse.quote(simbolo)}?period1={desde}&period2={int(time.time())}&interval=1d")
     try:
-        req = urllib.request.Request(url, headers=UA)
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with red.abrir(url, UA, timeout=30) as resp:
             bruto = json.loads(resp.read().decode("utf-8", "replace"))
         res = bruto["chart"]["result"][0]
+        granularidad = (res.get("meta") or {}).get("dataGranularity", "1d")
+        if granularidad != "1d":
+            aviso(f"{simbolo}: Yahoo ha devuelto precios cada {granularidad} en vez de diarios; uso la cache.")
+            return previo
         cierres = res["indicators"]["quote"][0].get("close", [])
         nuevo = {}
         for ts, c in zip(res.get("timestamp", []), cierres):
             if c is not None:
                 nuevo[dt.date.fromtimestamp(ts).isoformat()] = float(c)
         if nuevo:
+            # Lo descargado sustituye a lo guardado en ese tramo de fechas: así se limpian
+            # los datos mensuales que dejó en la cache la versión 1.1.0.
+            previo = {k: v for k, v in previo.items() if k < min(nuevo)}
             previo.update(nuevo)
             with open(ruta, "w", encoding="utf-8") as f:
                 json.dump(previo, f)
@@ -150,8 +162,7 @@ def descargar_morningstar(secid, universo="]2]0]FOESP$$ALL", anos=30):
     url = ("https://lt.morningstar.com/api/rest.svc/timeseries_price/t92wz0sj7c?"
            + urllib.parse.urlencode(q, safe="]$"))
     try:
-        req = urllib.request.Request(url, headers=UA)
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with red.abrir(url, UA, timeout=30) as resp:
             datos = json.loads(resp.read().decode("utf-8", "replace"))
         nuevo = {dt.datetime.fromtimestamp(x[0] / 1000, dt.timezone.utc).date().isoformat(): float(x[1])
                  for x in datos if x and len(x) > 1 and x[1] is not None}
@@ -399,8 +410,7 @@ def descargar_coingecko(coin, dias=365):
     url = (f"https://api.coingecko.com/api/v3/coins/{urllib.parse.quote(coin)}/market_chart"
            f"?vs_currency=eur&days={dias}&interval=daily")
     try:
-        req = urllib.request.Request(url, headers=UA)
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with red.abrir(url, UA, timeout=30) as resp:
             datos = json.loads(resp.read().decode("utf-8", "replace"))
         nuevo = {dt.datetime.fromtimestamp(ts / 1000, dt.timezone.utc).date().isoformat(): float(v)
                  for ts, v in datos.get("prices", []) if v is not None}
@@ -423,17 +433,18 @@ TIPOS = {
     "fondo": "Fondo de inversión", "etf": "ETF", "accion": "Acción", "cripto": "Criptomoneda",
     "commodity": "Materia prima", "bono": "Bono", "pension": "Plan de pensiones",
     "efectivo": "Cuenta / efectivo", "inmueble": "Inmueble", "deuda": "Deuda / préstamo",
-    "otro": "Otro",
+    "p2p": "Préstamos P2P / crowdfunding", "otro": "Otro",
 }
 CLASE_DEFECTO = {
     "fondo": "Fondos", "etf": "Renta variable", "accion": "Renta variable",
     "cripto": "Criptoactivos", "commodity": "Materias primas", "bono": "Renta fija",
     "pension": "Jubilación", "efectivo": "Efectivo", "inmueble": "Inmuebles",
-    "deuda": "Deudas", "otro": "Otros",
+    "deuda": "Deudas", "p2p": "P2P y crowdfunding", "otro": "Otros",
 }
 FUENTES = {"morningstar": "Morningstar", "yahoo": "Yahoo Finance",
            "coingecko": "CoinGecko", "manual": "Valor anotado a mano"}
-ORDEN_TIPO = {"compra": 0, "comision": 1, "dividendo": 2, "venta": 3}
+ORDEN_TIPO = {"compra": 0, "comision": 1, "dividendo": 2, "venta": 3, "traspaso_salida": 4, "traspaso_entrada": 5,
+              "ajuste": 6}
 
 # Carteras de referencia para «¿y si lo hubieras metido en un indexado?». Son ETF
 # reales que cotizan en euros; las piezas son (ticker de Yahoo, peso).
@@ -464,55 +475,389 @@ ETIQUETAS = {
 }
 
 
+# Textos que escribe el usuario (o que llegan en una copia o un CSV importado) y que el
+# panel pinta como HTML: sin < ni > no pueden colar código en la página.
+TEXTOS_LIBRES = ("nombre", "corto", "entidad", "clase", "gestora", "tipoDetalle", "papel",
+                 "identificador", "codigo", "indice", "indiceDetalle", "politica", "mercado", "isin")
+
+
+def sin_html(texto):
+    return re.sub(r"[<>]", "", texto) if isinstance(texto, str) else texto
+
+
+def limpia_textos(p):
+    for k in TEXTOS_LIBRES:
+        if isinstance(p.get(k), str):
+            p[k] = sin_html(p[k])
+    return p
+
+
+def fmt_fecha_es(iso):
+    return f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else ""
+
+
+def precios_de_operaciones(movs):
+    """{fecha: precio por unidad} de tus compras y ventas (lo pagado o cobrado, sin comisión)."""
+    out = {}
+    for m in sorted(movs, key=lambda m: m["fecha"]):
+        u = float(m.get("unidades") or 0)
+        if m.get("tipo") not in ("compra", "venta") or u <= 0:
+            continue
+        imp, com = float(m.get("importe") or 0), float(m.get("comision") or 0)
+        neto = imp - com if m.get("tipo") == "compra" else imp + com
+        if neto > 0:
+            out[m["fecha"]] = neto / u
+    return out
+
+
+def alquiler(movs, fecha_extracto):
+    """Lo cobrado de alquiler (movimientos «dividendo» de un inmueble) y lo gastado («comision»):
+    en total y en los últimos 12 meses. None si no hay nada anotado."""
+    hace_un_ano = (fecha_extracto - dt.timedelta(days=365)).isoformat()
+    out, hay = {"cobrado": 0.0, "gastos": 0.0, "cobrado12": 0.0, "gastos12": 0.0}, False
+    for m in movs:
+        if m.get("tipo") not in ("dividendo", "comision"):
+            continue
+        hay = True
+        k = "cobrado" if m["tipo"] == "dividendo" else "gastos"
+        imp = float(m.get("importe") or 0)
+        out[k] += imp
+        if m["fecha"] > hace_un_ano:
+            out[k + "12"] += imp
+    return {k: r2(v) for k, v in out.items()} if hay else None
+
+
+def objetivo_propio(cfg):
+    """El objetivo que ha elegido el usuario, o None para usar el siguiente hito.
+    Hasta la 1.2 toda cartera nueva traía 100.000 € activados sin haberlos elegido nadie:
+    ese valor de fábrica se trata como «sin objetivo propio»."""
+    o = cfg.get("objetivo")
+    if not isinstance(o, dict) or not o.get("activo") or not o.get("importe"):
+        return None
+    if not o.get("elegido") and float(o["importe"]) == 100000:
+        return None
+    return {"activo": True, "importe": float(o["importe"]),
+            "etiqueta": sin_html(o.get("etiqueta") or "Mi objetivo")}
+
+
+def colchon(cfg):
+    """El fondo de emergencia elegido (en euros) o None."""
+    c = cfg.get("colchon")
+    if not isinstance(c, dict):
+        return None
+    try:
+        if c.get("modo") == "importe":
+            return {"modo": "importe", "importe": float(c["importe"])}
+        return {"modo": "meses", "meses": float(c["meses"]), "gastoMensual": float(c["gastoMensual"]),
+                "importe": round(float(c["meses"]) * float(c["gastoMensual"]), 2)}
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def reparto_objetivo(cfg):
+    o = cfg.get("objetivoReparto")
+    if not isinstance(o, dict) or not o.get("pesos"):
+        return None
+    return {"por": "producto" if o.get("por") == "producto" else "clase",
+            "pesos": {sin_html(str(k)): float(v) for k, v in o["pesos"].items() if isinstance(v, (int, float))},
+            "vigilar": float(o.get("vigilar") or 3), "rebalancear": float(o.get("rebalancear") or 5),
+            "conEfectivo": bool(o.get("conEfectivo")),
+            "cuenta": {sin_html(str(k)): bool(v) for k, v in (o.get("cuenta") or {}).items()}
+            if isinstance(o.get("cuenta"), dict) else {}}
+
+
 def clave_serie(p):
     return {"morningstar": "MS:", "coingecko": "CG:"}.get(p.get("fuente"), "") + (p.get("codigo") or "")
 
 
-def aplicar_movimientos(p, movs):
-    """
-    Recorre los movimientos de un producto por fecha. Las ventas descuentan el coste
-    por FIFO (primero lo mas antiguo), como hace Hacienda: el coste de lo vendido sale
-    de "aportado" y la diferencia con lo cobrado es plusvalia realizada.
+def expande_traspasos(movimientos):
+    """Un traspaso se guarda como un solo movimiento (del producto de origen al de destino).
+    Aquí se parte en su salida (en el origen) y su entrada (en el destino), unidas por su id."""
+    out = []
+    for m in movimientos:
+        if m.get("tipo") != "traspaso":
+            out.append(m)
+            continue
+        out.append({**m, "tipo": "traspaso_salida", "_tid": m.get("id")})
+        out.append({**m, "tipo": "traspaso_entrada", "producto": m.get("destino"), "origen": m.get("producto"),
+                    "unidades": m.get("unidadesDestino"), "_tid": m.get("id")})
+    return out
 
-    Devuelve eventos (fecha, +-unidades, +-aportado) para las series diarias y flujos
-    (fecha, importe) para la TIR, en negativo lo que sale de tu cuenta.
+
+def _saca_fifo(lotes, unidades):
+    """Saca 'unidades' de los lotes, primero los más antiguos. Devuelve (trozos, lo que faltaba).
+    Cada trozo es [unidades, coste, ref, fecha de compra]."""
+    quedan, trozos = unidades, []
+    while quedan > 1e-9 and lotes:
+        lu, lc, ref, lf = lotes[0]
+        toma = min(lu, quedan)
+        parte = lc * toma / lu if lu else 0.0
+        trozos.append([toma, parte, ref, lf])
+        quedan -= toma
+        lotes[0] = [lu - toma, lc - parte, ref, lf]
+        if lotes[0][0] <= 1e-9:
+            lotes.pop(0)
+    return trozos, quedan
+
+
+def _saca_proporcion(lotes, fraccion):
+    """Saca la misma fracción de cada lote (productos a mano, sin unidades)."""
+    trozos = []
+    for lote in lotes:
+        lu, lc, ref, lf = lote
+        trozos.append([lu * fraccion, lc * fraccion, ref, lf])
+        lote[0], lote[1] = lu * (1 - fraccion), lc * (1 - fraccion)
+    lotes[:] = [l for l in lotes if l[1] > 1e-9 or l[0] > 1e-9]
+    return trozos
+
+
+def aplicar_todos(productos, movs_por, valor_a_mano=None, conservar_lotes=False, aportado_a_mano=None):
     """
-    lotes, eventos, flujos, vendidas = [], [], [], set()
-    realizado = comisiones = 0.0
-    for m in sorted(movs, key=lambda x: (x["fecha"], ORDEN_TIPO.get(x.get("tipo"), 9))):
-        f, t = m["fecha"], m.get("tipo")
+    Recorre por fecha los movimientos de todos los productos a la vez. Las ventas descuentan
+    el coste por FIFO (primero lo mas antiguo), como hace Hacienda: el coste de lo vendido
+    sale de "aportado" y la diferencia con lo cobrado es plusvalia realizada.
+
+    Un traspaso no es una venta: los lotes que salen del origen (con su coste y su fecha de
+    compra) pasan al destino, sin plusvalia. Para la TIR de cada producto cuenta como una
+    venta y una compra a su valor de ese dia, que en el total se anulan.
+
+    valor_a_mano(pid, fecha) da el valor anotado de un producto sin cotizacion: con el se
+    reparte el coste en los traspasos parciales de productos sin unidades. aportado_a_mano(pid,
+    fecha) da lo aportado que anotaste: es el coste que pasa al destino si no hay compras.
+
+    Devuelve, por producto, eventos (fecha, +-unidades, +-aportado) para las series
+    diarias y flujos (fecha, importe) para la TIR, en negativo lo que sale de tu cuenta.
+    """
+    est = {p["id"]: {"eventos": [], "flujos": [], "realizado": 0.0, "comisiones": 0.0, "vendidas": set(),
+                     "lotes": [], "traspasos": [], "ajustes": [],
+                     # lo realizado, por partes: ventas (cobrado - coste FIFO), dividendos e
+                     # intereses, comisiones que no van en una compra; y el coste de lo vendido
+                     "ventas": 0.0, "dividendos": 0.0, "gastos": 0.0, "costeVendido": 0.0,
+                     # cada venta con las compras de las que salen (para el resumen de la Renta)
+                     "ventasDetalle": []}
+           for p in productos}
+    nombre = {p["id"]: p.get("corto") or p.get("nombre") or p["id"] for p in productos}
+    todos = [m for pid, movs in movs_por.items() if pid in est for m in movs
+             if m.get("tipo") != "traspaso_entrada"]   # la entrada se hace junto con su salida
+    for m in sorted(todos, key=lambda x: (x["fecha"], ORDEN_TIPO.get(x.get("tipo"), 9))):
+        pid, f, t = m["producto"], m["fecha"], m.get("tipo")
+        e = est[pid]
         u, imp = float(m.get("unidades") or 0), float(m.get("importe") or 0)
         if t == "compra":
-            lotes.append([u, imp, id(m)])
-            eventos.append((f, u, imp))
-            flujos.append((f, -imp))
-            comisiones += float(m.get("comision") or 0)
+            e["lotes"].append([u, imp, id(m), f])
+            e["eventos"].append((f, u, imp))
+            e["flujos"].append((f, -imp))
+            e["comisiones"] += float(m.get("comision") or 0)
         elif t == "venta":
-            quedan, coste = u, 0.0
-            while quedan > 1e-9 and lotes:
-                lu, lc, ref = lotes[0]
-                toma = min(lu, quedan)
-                parte = lc * toma / lu if lu else 0.0
-                coste += parte
-                quedan -= toma
-                vendidas.add(ref)
-                lotes[0] = [lu - toma, lc - parte, ref]
-                if lotes[0][0] <= 1e-9:
-                    lotes.pop(0)
+            trozos, quedan = _saca_fifo(e["lotes"], u)
+            coste = sum(x[1] for x in trozos)
+            e["vendidas"].update(x[2] for x in trozos)
             if quedan > 1e-6:
-                aviso(f"{p['corto']}: el {f} vendes más unidades de las que tienes. Revisa sus movimientos.")
-            realizado += imp - coste
-            eventos.append((f, -(u - quedan), -coste))
-            flujos.append((f, imp))
+                aviso(f"{nombre[pid]}: el {f} vendes más unidades de las que tienes. Revisa sus movimientos.")
+            e["realizado"] += imp - coste
+            e["ventas"] += imp - coste
+            e["costeVendido"] += coste
+            e["ventasDetalle"].append({"fecha": f, "unidades": u - quedan, "importe": imp, "coste": coste,
+                                       "compras": [[x[3], x[0], x[1]] for x in trozos],
+                                       "faltan": quedan if quedan > 1e-6 else 0.0})
+            e["eventos"].append((f, -(u - quedan), -coste))
+            e["flujos"].append((f, imp))
         elif t == "dividendo":
-            realizado += imp
-            flujos.append((f, imp))
+            e["realizado"] += imp
+            e["dividendos"] += imp
+            e["flujos"].append((f, imp))
         elif t == "comision":
-            realizado -= imp
-            comisiones += imp
-            flujos.append((f, -imp))
-    return {"eventos": eventos, "flujos": flujos, "realizado": realizado, "comisiones": comisiones,
-            "vendidas": vendidas}
+            e["realizado"] -= imp
+            e["gastos"] += imp
+            e["comisiones"] += imp
+            e["flujos"].append((f, -imp))
+        elif t == "ajuste":
+            # «Tengo X participaciones según mi banco»: se reparten entre los lotes que hay
+            # en proporción, sin cambiar lo que pagaste (ni su fecha).
+            tenias = sum(l[0] for l in e["lotes"])
+            if tenias > 1e-12:
+                factor = u / tenias
+                for l in e["lotes"]:
+                    l[0] *= factor
+            elif u > 0:
+                e["lotes"].append([u, 0.0, id(m), f])
+            e["eventos"].append((f, u - tenias, 0.0))
+            e["ajustes"].append({"fecha": f, "antes": r4(tenias), "despues": r4(u)})
+        elif t == "traspaso_salida":
+            dest = m.get("destino")
+            ud = float(m.get("unidadesDestino") or 0)
+            tiene_unidades = u > 0 and any(l[0] > 1e-9 for l in e["lotes"])
+            if tiene_unidades:
+                trozos, quedan = _saca_fifo(e["lotes"], u)
+                if quedan > 1e-6:
+                    aviso(f"{nombre[pid]}: el {f} traspasas más participaciones de las que tienes. "
+                          "Revisa sus movimientos.")
+                salen = u - quedan
+            else:
+                # Sin unidades (un plan anotado a mano): sale todo o la parte que es el importe
+                # de lo que valía ese día.
+                coste_total = sum(l[1] for l in e["lotes"])
+                if coste_total <= 1e-9 and aportado_a_mano:
+                    # Sin compras anotadas: el coste es lo aportado que apuntaste en sus valores.
+                    ap = aportado_a_mano(pid, f)
+                    if ap and ap > 0:
+                        e["lotes"] = [[0.0, float(ap), ("aportado", pid), f]]
+                        coste_total = float(ap)
+                valor = valor_a_mano(pid, f) if valor_a_mano else None
+                if m.get("total"):
+                    fraccion = 1.0
+                elif valor:
+                    fraccion = min(1.0, imp / valor)
+                else:
+                    fraccion = min(1.0, imp / coste_total) if coste_total else 1.0
+                trozos, salen = _saca_proporcion(e["lotes"], fraccion), 0.0
+            coste = sum(x[1] for x in trozos)
+            e["vendidas"].update(x[2] for x in trozos)
+            e["eventos"].append((f, -salen, -coste))
+            e["flujos"].append((f, imp))
+            e["traspasos"].append({"fecha": f, "tipo": "salida", "otro": dest, "importe": r2(imp),
+                                   "unidades": r4(salen) if tiene_unidades else None, "coste": r2(coste),
+                                   "total": bool(m.get("total")), "estimada": bool(m.get("fechaEstimada"))})
+            d_ = est.get(dest)
+            if d_ is None:
+                aviso(f"{nombre[pid]}: el traspaso del {f} va a un producto que ya no existe o es una cuenta.")
+                continue
+            # Los lotes llegan al destino con su coste y su fecha de compra (por eso se
+            # colocan por fecha entre los que ya tenía) y con las participaciones nuevas.
+            base = salen if tiene_unidades and salen > 1e-12 else coste
+            for tu, tc, ref, lf in trozos:
+                peso = (tu if tiene_unidades and salen > 1e-12 else tc) / base if base else 1.0 / len(trozos)
+                nuevo = [ud * peso, tc, ("t", m.get("_tid"), ref), lf]
+                i = len(d_["lotes"])
+                while i > 0 and d_["lotes"][i - 1][3] > lf:
+                    i -= 1
+                d_["lotes"].insert(i, nuevo)
+            if not trozos and ud:
+                d_["lotes"].append([ud, 0.0, ("t", m.get("_tid")), f])
+            d_["eventos"].append((f, ud, coste))
+            d_["flujos"].append((f, -imp))
+            d_["traspasos"].append({"fecha": f, "tipo": "entrada", "otro": pid, "importe": r2(imp),
+                                    "unidades": r4(ud) if ud else None, "coste": r2(coste),
+                                    "total": bool(m.get("total")), "estimada": bool(m.get("fechaEstimada"))})
+    if not conservar_lotes:
+        for e in est.values():
+            e.pop("lotes")
+    return est
+
+
+def lotes_vivos(cfg, pid, fecha):
+    """Lotes que quedan de un producto al final de 'fecha' (FIFO, con los traspasos):
+    [[unidades, coste, ref, fecha de compra]], del más antiguo al más nuevo."""
+    productos = [p for p in cfg.get("productos", []) if p.get("tipo") not in ("efectivo", "deuda")]
+    movs_por = defaultdict(list)
+    for m in expande_traspasos(m for m in cfg.get("movimientos", []) if m.get("fecha", "") <= fecha):
+        movs_por[m.get("producto")].append(m)
+    est = aplicar_todos(productos, movs_por, conservar_lotes=True)
+    return [l for l in (est.get(pid) or {}).get("lotes", []) if l[0] > 1e-9 or l[1] > 1e-9]
+
+
+def interpola(snaps, fecha):
+    """Valor en 'fecha' de unos valores anotados [(fecha, valor)], en línea recta entre ellos.
+    None si es anterior al primero."""
+    previo = None
+    for f, v in snaps:
+        if f == fecha:
+            return v
+        if f > fecha:
+            if previo is None:
+                return None
+            f0, v0 = previo
+            t = (d(fecha) - d(f0)).days / max((d(f) - d(f0)).days, 1)
+            return v0 + (v - v0) * t
+        previo = (f, v)
+    return previo[1] if previo else None
+
+
+def snaps_con_traspasos(snaps, traspasos):
+    """
+    En un producto que se valora a mano, el traspaso cambia su valor ese día aunque no
+    hayas anotado nada: sale el importe (o todo, si es total) o entra. Se añade ese punto
+    y el del día anterior (para que la línea no baje poco a poco desde el último valor),
+    salvo que ya hayas anotado tú el valor de ese día.
+    """
+    snaps = [list(s) for s in snaps]
+    for t in sorted(traspasos, key=lambda t: t["fecha"]):
+        f = t["fecha"]
+        if any(s[0] == f for s in snaps):
+            continue
+        antes = interpola([(s[0], s[1]) for s in snaps], f)
+        ap_antes = interpola([(s[0], float(s[2])) for s in snaps if s[2] is not None], f)
+        coste = t.get("coste") or 0.0
+        if t["tipo"] == "salida":
+            nuevo = 0.0 if t.get("total") else max(0.0, (antes or 0.0) - (t["importe"] or 0.0))
+            ap_nuevo = None if ap_antes is None else (0.0 if t.get("total") else max(0.0, ap_antes - coste))
+        else:
+            nuevo = (antes or 0.0) + (t["importe"] or 0.0)
+            ap_nuevo = None if ap_antes is None else ap_antes + coste
+        vispera = (d(f) - dt.timedelta(days=1)).isoformat()
+        if antes is not None and not any(s[0] == vispera for s in snaps):
+            snaps.append([vispera, round(antes, 2), None if ap_antes is None else round(ap_antes, 2)])
+        snaps.append([f, round(nuevo, 2), None if ap_nuevo is None else round(ap_nuevo, 2)])
+        snaps.sort(key=lambda s: s[0])
+    return snaps
+
+
+def aplicar_movimientos(p, movs):
+    """Los movimientos de un solo producto (ver aplicar_todos)."""
+    return aplicar_todos([p], {p["id"]: movs})[p["id"]]
+
+
+def resumen_dividendos(movimientos, productos, fecha_extracto):
+    """
+    Dividendos, cupones e intereses cobrados: por año, por producto y en los últimos
+    12 meses. La rentabilidad por dividendo se da sobre lo que vale hoy el producto
+    y sobre lo que te costó (lo que pusiste y sigue invertido).
+    """
+    por_id = {p["id"]: p for p in productos}
+    hace_un_ano = (fecha_extracto - dt.timedelta(days=365)).isoformat()
+    cobros = sorted((m["fecha"], m["producto"], float(m.get("importe") or 0))
+                    for m in movimientos if m.get("tipo") == "dividendo" and m.get("producto") in por_id)
+    por_ano, por_prod = defaultdict(float), {}
+    for f, pid, imp in cobros:
+        por_ano[f[:4]] += imp
+        x = por_prod.setdefault(pid, {"id": pid, "total": 0.0, "ultimos12": 0.0, "cobros": 0, "ultimo": None})
+        x["total"] += imp
+        x["cobros"] += 1
+        x["ultimo"] = f
+        if f > hace_un_ano:
+            x["ultimos12"] += imp
+    lineas = []
+    for x in sorted(por_prod.values(), key=lambda x: -x["total"]):
+        p = por_id[x["id"]]
+        lineas.append({**x, "total": r2(x["total"]), "ultimos12": r2(x["ultimos12"]),
+                       "sobreValor": r4(x["ultimos12"] / p["valor"]) if p.get("valor") else None,
+                       "sobreCoste": r4(x["ultimos12"] / p["aportado"]) if p.get("aportado") else None})
+    ultimos12 = sum(x["ultimos12"] for x in por_prod.values())
+    valor_pagadores = sum(por_id[x["id"]].get("valor") or 0 for x in por_prod.values() if x["ultimos12"])
+    anos = [str(a) for a in range(int(min(por_ano)), fecha_extracto.year + 1)] if por_ano else []
+    return {"total": r2(sum(por_ano.values())), "ultimos12": r2(ultimos12),
+            "rentabilidad": r4(ultimos12 / valor_pagadores) if valor_pagadores else None,
+            "porAno": [[a, r2(por_ano.get(a, 0.0))] for a in anos],
+            "porProducto": lineas,
+            "ultimos": [{"fecha": f, "producto": pid, "importe": r2(imp)} for f, pid, imp in reversed(cobros[-12:])]}
+
+
+# Monedas en las que se puede VER el panel (todo se calcula en euros).
+MONEDAS_VISTA = {"USD": "Dólares", "GBP": "Libras", "CHF": "Francos suizos", "MXN": "Pesos mexicanos",
+                 "ARS": "Pesos argentinos", "CLP": "Pesos chilenos", "COP": "Pesos colombianos"}
+
+
+def tipos_de_cambio(series):
+    """Cuántas unidades de cada moneda da 1 euro según el último cambio conocido."""
+    out = {}
+    for codigo, nombre in MONEDAS_VISTA.items():
+        sim = simbolo_fx(codigo)[0]
+        s = series.get(sim) or descargar_serie(sim, anos=1)
+        validos = {k: v for k, v in s.items() if v}
+        if validos:
+            fecha = max(validos)
+            out[codigo] = {"nombre": nombre, "porEuro": round(1 / validos[fecha], 6), "fecha": fecha}
+    return out
 
 
 def descarga_series(productos_cfg, series=None):
@@ -561,17 +906,40 @@ def serie_producto(p, carpeta, fresca=False):
     return s
 
 
-def serie_cambio(moneda, carpeta):
-    """Cambio diario de 'moneda' a euros ({} si es EUR), con cache."""
+def serie_cambio(moneda, carpeta, fresca=False):
+    """Cambio diario de 'moneda' a euros ({} si es EUR), con cache (o recién bajado con fresca=True)."""
     global CACHE, SIN_RED, SOLO_FALTAN
-    CACHE, SIN_RED, SOLO_FALTAN = os.path.join(carpeta, "cache"), False, True
+    CACHE, SIN_RED, SOLO_FALTAN = os.path.join(carpeta, "cache"), False, not fresca
     sim = simbolo_fx(moneda)[0]
     return descargar_serie(sim) if sim else {}
 
 
 # ---------------------------------------------------------------- construccion
 
-def construir(cfg, carpeta, descargar=True):
+def fifo_cartera(cfg, productos_cfg=None):
+    """FIFO de todos los productos a la vez (los traspasos pasan lotes de uno a otro).
+    Devuelve (resultado de aplicar_todos, movimientos por producto, valores anotados por producto)."""
+    if productos_cfg is None:
+        productos_cfg = cfg.get("productos", [])
+    movs_por, vals_por = defaultdict(list), defaultdict(list)
+    for m in expande_traspasos(cfg.get("movimientos", [])):
+        movs_por[m.get("producto")].append(m)
+    for v in cfg.get("valoraciones", []):
+        vals_por[v.get("producto")].append(v)
+
+    def valor_a_mano(pid, fecha):
+        snaps = [(v["fecha"], float(v["valor"])) for v in sorted(vals_por.get(pid, []), key=lambda v: v["fecha"])]
+        return interpola(snaps, fecha)
+
+    def aportado_a_mano(pid, fecha):
+        snaps = [(v["fecha"], float(v["aportado"])) for v in sorted(vals_por.get(pid, []), key=lambda v: v["fecha"])
+                 if v.get("aportado") is not None]
+        return interpola(snaps, fecha)
+    con_movs = [p for p in productos_cfg if p.get("tipo") not in ("efectivo", "deuda")]
+    return aplicar_todos(con_movs, movs_por, valor_a_mano, aportado_a_mano=aportado_a_mano), movs_por, vals_por
+
+
+def construir(cfg, carpeta, descargar=True, cache=None, historico=True):
     """
     Calcula todo lo que pinta el panel a partir de la cartera (productos, movimientos
     y valoraciones) y devuelve el diccionario DATOS. Con descargar=False no sale a
@@ -579,7 +947,7 @@ def construir(cfg, carpeta, descargar=True):
     solo descarga los precios de productos nuevos.
     """
     global CACHE, SIN_RED, SOLO_FALTAN
-    CACHE = os.path.join(carpeta, "cache")
+    CACHE = cache or os.path.join(carpeta, "cache")
     SIN_RED = not descargar
     SOLO_FALTAN = descargar == "faltan"
     AVISOS.clear()
@@ -587,6 +955,7 @@ def construir(cfg, carpeta, descargar=True):
 
     productos_cfg = [dict(p) for p in cfg.get("productos", [])]
     for p in productos_cfg:
+        limpia_textos(p)
         p.setdefault("fuente", "manual")
         p.setdefault("corto", (p.get("nombre") or p["id"])[:24])
 
@@ -597,14 +966,12 @@ def construir(cfg, carpeta, descargar=True):
             if sim not in series:
                 series[sim] = descargar_serie(sim)
 
-    movs_por, vals_por = defaultdict(list), defaultdict(list)
-    for m in cfg.get("movimientos", []):
-        movs_por[m.get("producto")].append(m)
-    for v in cfg.get("valoraciones", []):
-        vals_por[v.get("producto")].append(v)
+    movimientos_de, movs_por, vals_por = fifo_cartera(cfg, productos_cfg)
 
     # Fecha de valoracion: el ultimo precio o valor anotado que haya, sin pasar de hoy.
     ultimas = [v["fecha"] for v in cfg.get("valoraciones", [])]
+    # Un traspaso entre productos a mano cambia su valor ese día aunque no se haya anotado nada.
+    ultimas += [m["fecha"] for m in cfg.get("movimientos", []) if m.get("tipo") == "traspaso"]
     for p in productos_cfg:
         s = precio_eur(p, series) if p["fuente"] != "manual" else {}
         if s and movs_por.get(p["id"]):
@@ -644,11 +1011,34 @@ def construir(cfg, carpeta, descargar=True):
             primera = d(snaps[0][0]) if primera is None else min(primera, d(snaps[0][0]))
             continue
 
-        mv = aplicar_movimientos(p, movs)
+        mv = movimientos_de[p["id"]]
+        nombres = {x["id"]: x.get("corto") or x.get("nombre") for x in productos_cfg}
+        p["traspasos"] = [{**t, "otroNombre": nombres.get(t["otro"], t["otro"])} for t in mv["traspasos"]]
+        p["ajustes"] = mv["ajustes"]
+        if mv["traspasos"]:
+            snaps = snaps_con_traspasos(snaps, mv["traspasos"])
         p["realizado"] = round(mv["realizado"], 2)
+        p["cobros"] = {k: round(mv[k], 2) for k in ("ventas", "dividendos", "gastos")}
+        p["costeVendido"] = round(mv["costeVendido"], 2)
         p["_mv"] = mv
         cotiza = p["fuente"] != "manual"
         serie = precio_eur(p, series) if cotiza else {}
+        if cotiza:
+            # Sin precio de mercado en las fechas de tus operaciones (un ticker sin histórico, o
+            # con histórico solo desde hace poco): ahí se usa el precio al que compraste o vendiste.
+            ops = precios_de_operaciones(movs)
+            inicio = min(serie) if serie else None
+            huecos = {f: v for f, v in ops.items() if inicio is None or f < inicio}
+            if huecos and (serie or not snaps):
+                if serie:
+                    aviso(f"{p['corto']}: {p['fuentePrecio']} no tiene precios antes del {fmt_fecha_es(inicio)}; "
+                          "hasta entonces lo valoro al precio de tus compras y ventas. Comprueba su código si no cuadra.")
+                else:
+                    aviso(f"{p['corto']}: no encuentro su precio en {p['fuentePrecio']}; lo valoro al precio de tus "
+                          "compras y ventas. Comprueba el identificador o anota su valor a mano.")
+                serie = {**huecos, **serie}
+                _COTIZACIONES[p["id"]] = serie
+                p["preciosDeOperaciones"] = True
         if cotiza and not serie:
             if snaps:
                 aviso(f"{p['corto']}: no encuentro su precio en {p['fuentePrecio']}; "
@@ -678,7 +1068,7 @@ def construir(cfg, carpeta, descargar=True):
                 p["aportaciones"].append({
                     "fecha": m["fecha"], "importe": round(imp, 2),
                     "participaciones": round(u, 6), "precio": r4((imp - com) / u) if u else None,
-                    "comision": com, "tipoOrden": m.get("nota") or None,
+                    "comision": com, "tipoOrden": sin_html(m.get("nota")) or None,
                     # De una compra ya vendida (toda o en parte) no se enseña "cuánto vale hoy".
                     "valor": None if id(m) in mv["vendidas"] else round(u * nav_hoy, 2),
                 })
@@ -781,9 +1171,12 @@ def construir(cfg, carpeta, descargar=True):
             p["valor"] = snaps[-1][1]
             p["aportado"] = snaps[-1][2]
             p["desde"] = snaps[0][0].isoformat()
-            # Si tiene aportaciones anotadas como movimientos, el aportado sale de ahi.
+            # Si tiene aportaciones anotadas como movimientos, el aportado sale de ahi. Si no
+            # tiene compras pero sí lo aportado anotado en sus valores, manda lo anotado (los
+            # traspasos ya lo ajustan en snaps_con_traspasos).
             eventos = p["_mv"]["eventos"]
-            if eventos:
+            sin_compras = not any(m.get("tipo") == "compra" for m in movs)
+            if eventos and not (sin_compras and any(s[2] is not None for s in snaps)):
                 acum, serie_ap = 0.0, []
                 pend = sorted(eventos)
                 for f in eje_iso:
@@ -796,6 +1189,19 @@ def construir(cfg, carpeta, descargar=True):
             for f, v, a in snaps:
                 p["aportaciones"].append({"fecha": f.isoformat(), "importe": None,
                                           "valor": v, "tipo": "snapshot"})
+
+    # ---- qué hay dentro de cada producto: países y sectores (Morningstar) ----
+    from . import exposicion   # aquí y no arriba: exposicion usa utilidades de este módulo
+    pendientes = [p for p in productos if not p.get("exposicion") and exposicion.clave(p)]
+    if pendientes:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            # Solo al actualizar precios se sale a internet (tarda unos segundos por fondo);
+            # al guardar un cambio, lo que haya en la cache (el servidor completa lo que falte aparte).
+            repartos = list(ex.map(lambda p: exposicion.de_producto(p, CACHE, red=descargar is True), pendientes))
+        for p, r in zip(pendientes, repartos):
+            if r:
+                p["exposicion"] = r
 
     # ---- metricas por producto ----
     print("\n=== 4. Metricas ===")
@@ -820,6 +1226,17 @@ def construir(cfg, carpeta, descargar=True):
             p["plusvalia"] = None
             p["rentabilidad"] = None
             p["tir"] = None
+        # Ganancia total: lo que ganas con lo que aún tienes (precio) más lo ya cobrado en
+        # ventas y dividendos, menos comisiones. El % es sobre todo lo que llegaste a invertir
+        # en él (lo que tienes más lo que vendiste, a su coste).
+        base = (p["aportado"] or 0) + p["costeVendido"]
+        if p["plusvalia"] is not None or p["costeVendido"] > 0:
+            p["gananciaTotal"] = round((p["plusvalia"] or 0) + p["realizado"], 2)
+            p["rentabilidadTotal"] = r4(p["gananciaTotal"] / base) if base > 0 else None
+        else:
+            p["gananciaTotal"] = p["rentabilidadTotal"] = None
+        if p["tipoClave"] == "inmueble":
+            p["alquiler"] = alquiler(movs_por.get(p["id"], []), fecha_extracto)
 
         # rendimiento del subyacente en varias ventanas
         if p.get("navSerie"):
@@ -870,6 +1287,12 @@ def construir(cfg, carpeta, descargar=True):
         return total, series_extra
 
     tot_otros, ser_otros = suma_manual(otros, 1)
+    # Los intereses de las cuentas (movimientos «dividendo», menos sus gastos) también son dinero ya cobrado.
+    for e in ser_otros:
+        c = alquiler(movs_por.get(e["id"], []), fecha_extracto)
+        if c:
+            e["intereses"] = c
+            e["realizado"] = round(c["cobrado"] - c["gastos"], 2)
     tot_pasivos, ser_pasivos = suma_manual(pasivos, -1)
 
     serie_total, serie_ap_total = [], []
@@ -885,7 +1308,7 @@ def construir(cfg, carpeta, descargar=True):
     plusvalia_total = round(valor_conocido - aportado_total, 2)
     flujos_globales.append((fecha_extracto, valor_tir))
     tir_total = r4(xirr(flujos_globales))
-    realizado_total = round(sum(p.get("realizado") or 0 for p in productos), 2)
+    realizado_total = round(sum(p.get("realizado") or 0 for p in productos + ser_otros), 2)
 
     for p in productos + ser_otros + ser_pasivos:
         p["peso"] = r4(p["valor"] / patrimonio) if patrimonio else 0
@@ -1118,7 +1541,7 @@ def construir(cfg, carpeta, descargar=True):
         met = metricas_indice(idx, rf)
         if not met:
             continue
-        comparador.append({"id": c["id"], "nombre": c["nombre"], "real": bool(c.get("real")),
+        comparador.append({"id": c["id"], "nombre": sin_html(c["nombre"]), "real": bool(c.get("real")),
                            "pesos": c.get("pesos"), "indice": [r2(v) for v in idx],
                            "metricas": met})
 
@@ -1131,7 +1554,8 @@ def construir(cfg, carpeta, descargar=True):
     anos_nat = sorted({f[:4] for f in eje_iso})
     rent_anual = {"anos": anos_nat, "cartera": [], "parcial": [],
                   "porProducto": {p["id"]: [] for p in inv},
-                  "desde": {p["id"]: [] for p in inv}}
+                  "desde": {p["id"]: [] for p in inv},
+                  "vendido": {p["id"]: [] for p in inv}}
     primer_dia = {p["id"]: next((i for i, v in enumerate(p["serie"]) if v is not None), None)
                   for p in inv}
     for ano in anos_nat:
@@ -1146,7 +1570,17 @@ def construir(cfg, carpeta, descargar=True):
             if i0 is None or i0 > fin:
                 rent_anual["porProducto"][p["id"]].append(None)
                 rent_anual["desde"][p["id"]].append(None)
+                rent_anual["vendido"][p["id"]].append(False)
                 continue
+            # Todo el año sin nada (ya vendido antes) y sin movimientos: no hay rentabilidad que dar.
+            sin_nada = all(not (p["serie"][i] or 0) for i in range(ini, fin + 1)) \
+                and not any(flujo_prod[p["id"]][i] for i in range(ini, fin + 1))
+            if sin_nada and i0 < ini:
+                rent_anual["porProducto"][p["id"]].append(None)
+                rent_anual["desde"][p["id"]].append(None)
+                rent_anual["vendido"][p["id"]].append(True)
+                continue
+            rent_anual["vendido"][p["id"]].append(False)
             ix = idx_prod[p["id"]]
             empieza_aqui = base_ano is None or i0 > base_ano
             bb = 100.0 if empieza_aqui else ix[base_ano]
@@ -1243,7 +1677,7 @@ def construir(cfg, carpeta, descargar=True):
 
     datos = {
         "generado": dt.datetime.now().replace(microsecond=0).isoformat(),
-        "titular": cfg.get("titular", "Mi patrimonio"),
+        "titular": sin_html(cfg.get("titular", "Mi patrimonio")),
         "moneda": cfg.get("moneda", "EUR"),
         "fechaExtracto": fecha_extracto.isoformat(),
         "fechas": eje_iso,
@@ -1274,15 +1708,19 @@ def construir(cfg, carpeta, descargar=True):
         },
         "aportacionesMensuales": {"meses": meses, "porProducto": por_producto,
                                   "total": total_mes},
-        "objetivo": cfg.get("objetivo"),
+        "objetivo": objetivo_propio(cfg),
+        "objetivoReparto": reparto_objetivo(cfg),
+        "colchon": colchon(cfg),
         "comisiones": comisiones,
         "rentabilidadAnual": rent_anual,
+        "dividendos": resumen_dividendos(cfg.get("movimientos", []), productos + ser_otros, fecha_extracto),
+        "monedas": tipos_de_cambio(series),
         "resumenMensual": resumen_mensual,
         "comparador": comparador,
         "comparacion": comparacion,
         "indiceCartera": [r2(v) for v in idx_cartera],
         "vivo": vivo,
-        "avisos": AVISOS,
+        "avisos": [sin_html(a) for a in AVISOS],
     }
 
     for p in productos + otros + pasivos + ser_otros + ser_pasivos:
@@ -1290,6 +1728,8 @@ def construir(cfg, carpeta, descargar=True):
             p.pop(k)
 
     # historico: un resumen por cada fecha calculada, para no perder el rastro
+    if not historico:
+        return datos
     hist_ruta = os.path.join(carpeta, "historico.json")
     hist = lee_cache(hist_ruta) or []
     hist = [h for h in hist if h.get("fecha") != fecha_extracto.isoformat()]

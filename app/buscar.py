@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
+from . import red
 from .motor import UA
 
 ES_ISIN = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}\d$")
@@ -55,8 +56,7 @@ def _de_red(e):
 def _get(url, timeout=15):
     for intento in (1, 2, 3):
         try:
-            req = urllib.request.Request(url, headers=UA)
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with red.abrir(url, UA, timeout=timeout) as r:
                 return json.loads(r.read().decode("utf-8", "replace"))
         except Exception as e:
             if not _de_red(e):
@@ -96,6 +96,24 @@ def ms_buscar(isin):
                                "OngoingCharge|CollectedSRRI|CategoryName|BrandingCompanyName",
          "term": isin}
     return _get(MS_BUSCA + urllib.parse.urlencode(q)).get("rows", [])
+
+
+# Planes de pensiones españoles: están en Morningstar (sin ISIN) y su categoría acaba en «PP».
+ES_PLAN = re.compile(r"(\bPP\b|\bPPI\b|\bPPES\b|\bPPA\b|\bEPSV\b|pensi)", re.I)
+
+
+def ms_buscar_nombre(texto):
+    """Fondos que se venden en España y planes de pensiones, por su nombre."""
+    datos = "SecId|Name|isin|Universe|OngoingCharge|CollectedSRRI|CategoryName|BrandingCompanyName"
+    q = {"page": 1, "pageSize": 8, "outputType": "json", "version": 1, "languageId": "es-ES",
+         "currencyId": "EUR", "universeIds": "FOESP$$ALL", "securityDataPoints": datos, "term": texto}
+    fondos = _get(MS_BUSCA + urllib.parse.urlencode(q)).get("rows", [])
+    q.update(universeIds="FOALL$$ALL", pageSize=30)
+    planes = [f for f in _get(MS_BUSCA + urllib.parse.urlencode(q)).get("rows", [])
+              if str(f.get("CategoryName") or "").endswith("PP") or ES_PLAN.search(f.get("Name") or "")]
+    for f in planes:
+        f["_plan"] = True
+    return planes[:8] + [f for f in fondos if f.get("SecId") not in {x.get("SecId") for x in planes}][:6]
 
 
 def cg_buscar(q):
@@ -157,7 +175,8 @@ def buscar(texto):
     def añade(fuente, codigo, nombre, tipo, identificador=None, vivo=None, mercado=None):
         if not any(c["fuente"] == fuente and c["codigo"] == codigo for c in cands):
             cands.append({"fuente": fuente, "codigo": codigo, "nombre": nombre, "tipo": tipo,
-                          "identificador": identificador or codigo, "vivo": vivo, "bolsa": mercado})
+                          "identificador": identificador or ("" if tipo == "pension" else codigo),
+                          "vivo": vivo, "bolsa": mercado})
 
     if q.lower() in ATAJOS:
         cod, nombre = ATAJOS[q.lower()]
@@ -199,6 +218,14 @@ def buscar(texto):
                 añade("yahoo", f["Ticker"] + sufijo, f.get("Name"), "etf", isin)
             añade("morningstar", f["SecId"], f.get("Name"), "etf", isin, mercado=bolsa)
     else:
+        # Fondos y planes de pensiones por su nombre («MyInvestor Indexado Global»): Morningstar.
+        if len(q) >= 4:
+            for f in _intenta(ms_buscar_nombre, q):
+                tipo = "pension" if f.get("_plan") else "fondo"
+                añade("morningstar", f["SecId"], f.get("Name"), tipo, f.get("isin") or None)
+                ficha = {"ter": f.get("OngoingCharge"), "riesgo": f.get("CollectedSRRI"),
+                         "clase": f.get("CategoryName"), "gestora": f.get("BrandingCompanyName")}
+                cands[-1]["ficha"] = {k: v for k, v in ficha.items() if v not in (None, "")}
         monedas = _intenta(cg_buscar, q)
         for x in _intenta(yahoo_buscar, q):
             sym, tipo = x["symbol"], x.get("quoteType")
@@ -241,6 +268,6 @@ def buscar(texto):
     # Arriba: los fondos de Morningstar, luego el ticker exacto que has escrito y
     # luego lo que cotiza en euros.
     exacto = q.upper()
-    salida.sort(key=lambda c: (c["fuente"] != "morningstar" or c["tipo"] != "fondo",
+    salida.sort(key=lambda c: (c["fuente"] != "morningstar" or c["tipo"] not in ("fondo", "pension"),
                                c["codigo"].upper() != exacto, c.get("moneda") != "EUR"))
     return salida

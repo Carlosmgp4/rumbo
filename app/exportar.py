@@ -14,6 +14,7 @@ porcentajes), nunca tu patrimonio real.
 
 import base64
 import datetime as dt
+import html as html_
 import json
 import os
 import random
@@ -25,6 +26,7 @@ CAMPOS_DINERO = {
     "realizado", "participaciones", "titulos", "valorConCoste", "patrimonio", "ritmoMensual",
     "anual", "base", "compraventaPagada", "inicio", "fin", "mercado", "nuevo",
     "comision", "min", "max", "mediana", "p33", "p67", "snapshots", "flujos", "tuya", "tuValor",
+    "coste", "unidades", "gastoMensual", "cobros", "costeVendido", "gananciaTotal", "alquiler", "intereses",
 }
 # «total» y «porProducto» significan cosas distintas según dónde estén (en
 # rentabilidadAnual son porcentajes): solo se escalan en aportacionesMensuales.
@@ -68,6 +70,12 @@ def sin_importes(datos):
     for c in ("total", "porProducto"):
         if c in am:
             am[c] = _escala(am[c], k)
+    dv = out.get("dividendos")
+    if dv:   # «porAno» lleva [año, euros]: el año no se toca
+        dv["total"], dv["ultimos12"] = _escala(dv["total"], k), _escala(dv["ultimos12"], k)
+        dv["porAno"] = [[a, _escala(v, k)] for a, v in dv["porAno"]]
+        for linea in dv["porProducto"]:
+            linea["total"], linea["ultimos12"] = _escala(linea["total"], k), _escala(linea["ultimos12"], k)
     out["total"]["hitos"] = []
     out["objetivo"] = None
     if out.get("vivo"):
@@ -98,8 +106,9 @@ def pagina(web, datos, ocultar=False, titulo="Mi patrimonio"):
     previo = "window.ESTATICO = true;\n"
     if ocultar:
         previo += "window.OCULTAR_IMPORTES = true;\n"
-    trozos = [previo + "window.DATOS = " + json.dumps(datos, ensure_ascii=False, separators=(",", ":")) + ";"]
-    trozos += [lee(n) for n in ("canal.js", "graficos.js", "app.js")]
+    # «<» como <: ningún texto de los datos puede cerrar el <script> ni abrir otro.
+    trozos = [previo + "window.DATOS = " + json.dumps(datos, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c") + ";"]
+    trozos += [lee(n) for n in ("canal.js", "graficos.js", "calculos.js", "app.js")]
     scripts = "\n".join("<script>\n" + t.replace("</script>", "<\\/script>") + "\n</script>" for t in trozos)
     html, n = re.subn(r"<script>\s*/\* Carga los scripts.*?</script>", lambda m: scripts, html, flags=re.S)
     if not n:
@@ -111,6 +120,7 @@ def pagina(web, datos, ocultar=False, titulo="Mi patrimonio"):
     html = html.replace('src="icono-64.png"', f'src="{icono}"')
     html = re.sub(r'\s*<link rel="(icon|apple-touch-icon)"[^>]*>', "", html)
     desc = "Panel de patrimonio neto e inversiones hecho con Rumbo." + (" Importes ocultos." if ocultar else "")
+    titulo = html_.escape(str(titulo), quote=True)
     cabeceras = ('<meta name="robots" content="noindex, nofollow">\n'
                  f'<link rel="icon" type="image/png" href="{icono}">\n'
                  f'<meta property="og:title" content="{titulo} · Rumbo">\n'

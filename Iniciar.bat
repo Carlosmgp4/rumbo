@@ -37,9 +37,12 @@ if not defined UV if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\uv.exe" set "U
 if not defined UV if exist "%USERPROFILE%\.local\bin\uv.exe" set "UV=%USERPROFILE%\.local\bin\uv.exe"
 rem Recien instalado con winget, esta ventana aun no lo ve en el PATH: lo buscamos.
 if not defined UV for /d %%D in ("%LOCALAPPDATA%\Microsoft\WinGet\Packages\astral-sh.uv_*") do if exist "%%D\uv.exe" set "UV=%%D\uv.exe"
+rem Si una vez hubo que instalar el entorno fuera de esta carpeta, se usa ese directamente.
+if not exist ".venv\" if exist "%LOCALAPPDATA%\Rumbo\entorno\pyvenv.cfg" set "UV_PROJECT_ENVIRONMENT=%LOCALAPPDATA%\Rumbo\entorno"
 if defined UV (
   echo  Preparando la app con uv. La primera vez tarda un poco: descarga Python y lo necesario.
   "%UV%" run --quiet python -c "import flask" >nul 2>&1 || call :reparar_uv
+  "%UV%" run --quiet python -c "import flask" >nul 2>&1 || call :entorno_fuera
   "%UV%" run --quiet python -m app
   goto :fin
 )
@@ -105,6 +108,19 @@ for /f "delims=" %%I in ('"%UV%" python dir') do set "UVPY=%%I"
 set "PYREAL="
 for /d %%D in ("%UVPY%\cpython-3.12.*") do if exist "%%D\python.exe" set "PYREAL=%%D\python.exe"
 if defined PYREAL "%UV%" sync --quiet --python "%PYREAL%"
+exit /b 0
+
+:entorno_fuera
+rem Si Windows no deja crear la carpeta .venv aqui (OneDrive, Documentos o Escritorio
+rem protegidos, rutas largas...), el entorno de Python se instala en
+rem %LOCALAPPDATA%\Rumbo. Tus datos siguen en mis_datos, dentro de esta carpeta.
+echo  No puedo instalar Python dentro de esta carpeta. Lo instalo en tu carpeta de usuario.
+set "UV_PROJECT_ENVIRONMENT=%LOCALAPPDATA%\Rumbo\entorno"
+if defined PYREAL (
+  "%UV%" sync --quiet --python "%PYREAL%"
+) else (
+  "%UV%" sync --quiet
+)
 exit /b 0
 
 :fin
