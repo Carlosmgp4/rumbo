@@ -666,6 +666,8 @@ body.video .selPerfil,body.video #bannerTodos,body.video #seccionFiscal,body.vid
 .perfilFila small{color:var(--tinta3)}
 .listaNovedades{margin:10px 0 4px;padding-left:20px;line-height:1.6;color:var(--tinta2)}
 .listaNovedades li{margin-bottom:5px}
+.verEnVideo{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 14px;margin:0 0 12px;
+  border-radius:10px;background:var(--sup2)}
 /* ---- Canal del autor ---- */
 .ayudaVideo{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
 .ayudaVideo > div:first-child{flex:1;min-width:260px}
@@ -946,9 +948,10 @@ body.video .tarjetaCanal{display:none}
 <div class="panel" id="tab-ayuda" role="tabpanel" hidden>
   <section class="tarjeta ayudaTarjeta ayudaVideo">
     <div><b>¿Prefieres verlo en vídeo?</b>
-      <p>En el canal de <span class="autorCanal"></span> tienes el tutorial paso a paso: instalación, cómo meter
-      tus datos y cómo sacarle partido.</p></div>
-    <div class="botones"><a class="btn prim" id="ayudaTutorial" target="_blank" rel="noopener">▶ Ver el tutorial</a>
+      <p>En el canal de <span class="autorCanal"></span> tienes el vídeo con <b>todas las novedades de la 2.0</b> y el
+      <b>tutorial de instalación</b> paso a paso (grabado con la 1.0: se instala igual).</p></div>
+    <div class="botones"><a class="btn prim" id="ayudaNovedades" target="_blank" rel="noopener" hidden>▶ Novedades de la 2.0</a>
+      <a class="btn" id="ayudaTutorial" target="_blank" rel="noopener">▶ Tutorial de instalación</a>
       <a class="btn enlaceSuscribir" target="_blank" rel="noopener">Suscribirme</a></div>
   </section>
 

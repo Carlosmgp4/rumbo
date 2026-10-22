@@ -1462,10 +1462,12 @@
     if (!caso || (vista === clave && !forzar) || $("#modal").open || document.body.classList.contains("video")) return;
     recuerda.guarda("rumbo.novedades", clave);
     const lista = caso.novedades.length ? `<ul class="listaNovedades">${caso.novedades.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : "";
-    const video = caso.video ? `<a class="btn prim" href="${esc(caso.video)}" target="_blank" rel="noopener">▶ Ver el vídeo de la versión</a>` : "";
+    // Arriba del todo: quien prefiera el vídeo lo tiene a un clic (petición de Dani, 22-oct).
+    const video = caso.video ? `<div class="verEnVideo"><b>¿Prefieres verlo en vídeo?</b>
+       <a class="btn prim" href="${esc(caso.video)}" target="_blank" rel="noopener">▶ Ver las novedades en YouTube</a></div>` : "";
     const f = abreModal(n.nueva ? `Hay una versión nueva: ${esc(caso.titulo || caso.version)}` : `Novedades de ${esc(caso.titulo || "Rumbo " + caso.version)}`,
-      `${n.nueva ? `<p>Tienes la ${esc(n.actual)}. Esto es lo que trae la ${esc(caso.version)}:</p>` : "<p>Esto es lo que ha cambiado desde tu versión anterior:</p>"}
-       ${lista}<div class="imAcc">${video}${n.nueva ? `<a class="btn" href="${esc(n.repo)}" target="_blank" rel="noopener">Descargar en GitHub</a>` : ""}</div>
+      `${video}${n.nueva ? `<p>Tienes la ${esc(n.actual)}. Esto es lo que trae la ${esc(caso.version)}:</p>` : "<p>Esto es lo que ha cambiado desde tu versión anterior:</p>"}
+       ${lista}<div class="imAcc">${n.nueva ? `<a class="btn" href="${esc(n.repo)}" target="_blank" rel="noopener">Descargar en GitHub</a>` : ""}</div>
        ${n.nueva ? (n.docker ? '<p class="ayuda">Para actualizar: <code>docker compose pull &amp;&amp; docker compose up -d</code>. Tus datos no se tocan.</p>'
          : '<p class="ayuda">Para actualizar sin perder nada, sigue los pasos de Ayuda → «¿Cómo actualizo a una versión nueva?».</p>') : ""}`,
       async () => null, "Entendido");
@@ -1565,6 +1567,8 @@
     document.querySelectorAll(".enlaceSuscribir").forEach(el => { el.href = K.suscribir; });
     const tut = $("#ayudaTutorial");
     if (tut) tut.href = K.tutorial || K.canal + "/videos";
+    const nov = $("#ayudaNovedades");
+    if (nov && K.novedades) { nov.href = K.novedades; nov.hidden = false; }
 
     if (!D || D.modo !== "propio" || !(D.productos || []).length) return;
     let est = {};

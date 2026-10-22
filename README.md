@@ -13,6 +13,8 @@ Fondos, ETF, acciones, criptomonedas, oro, planes de pensiones, cuentas del banc
 
 Herramienta **gratuita** hecha por **Dani Dominguez Quant**. Si te resulta útil, la mejor forma de apoyarla es [suscribirte al canal de YouTube](https://www.youtube.com/channel/UCiS3qumDoE7QDwzo_ChU6yQ?sub_confirmation=1) ▶, donde cuento cada mes cómo evoluciona la cartera de ejemplo.
 
+▶ **Vídeos:** [todas las novedades de Rumbo 2.0](https://www.youtube.com/watch?v=I5enjwfQFIw) · [tutorial de instalación paso a paso (Rumbo 1.0, se instala igual)](https://www.youtube.com/watch?v=NReXUH7Obm8)
+
 > **Aviso.** Es una herramienta informativa. **No es asesoramiento financiero** ni una recomendación de compra o venta. Los precios vienen de servicios públicos gratuitos y pueden tener errores o retrasos: no se garantiza la exactitud de los datos. La cartera de ejemplo que trae es la cartera real del autor, con fines divulgativos.
 
 ---
@@ -106,7 +108,7 @@ Todo lo que pedisteis en los comentarios del vídeo y en GitHub, por orden de im
 
 ## Instalación en Windows
 
-Son unos 5 minutos la primera vez. No hace falta saber programar.
+Son unos 5 minutos la primera vez. No hace falta saber programar. Si lo prefieres en vídeo, aquí tienes el [tutorial de instalación paso a paso](https://www.youtube.com/watch?v=NReXUH7Obm8) (grabado con la 1.0: se instala igual).
 
 ### 1. Descarga la app
 

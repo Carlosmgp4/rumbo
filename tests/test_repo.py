@@ -64,6 +64,9 @@ class Lanzadores(unittest.TestCase):
                 self.assertTrue(js == "datos.js" or os.path.exists(os.path.join(RAIZ, "app", "web", js)))
 
 
+USUARIO = "danidm" + "98"
+
+
 class Privacidad(unittest.TestCase):
     def test_mis_datos_fuera_de_git(self):
         self.assertIn("mis_datos/", lee(".gitignore").split())
@@ -85,8 +88,9 @@ class Privacidad(unittest.TestCase):
             with self.subTest(ruta=ruta):
                 self.assertIsNone(iban.search(texto), "parece un IBAN")
                 self.assertIsNone(dni.search(texto), "parece un DNI")
-                sin_enlaces = re.sub(r"(github\.com|githubusercontent\.com|ghcr\.io)/danidm98", "", texto)
-                self.assertNotIn("danidm98", sin_enlaces, "el usuario solo puede salir en enlaces al repo")
+                # el usuario va partido para que esta prueba no se encuentre a sí misma
+                sin_enlaces = re.sub(r"(github\.com|githubusercontent\.com|ghcr\.io)/" + USUARIO, "", texto)
+                self.assertNotIn(USUARIO, sin_enlaces, "el usuario solo puede salir en enlaces al repo")
 
     def test_prompt_avisa_de_borrar_datos(self):
         self.assertIn("BORRA", lee("app/prompt_ia.txt"))
