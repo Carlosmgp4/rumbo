@@ -284,14 +284,15 @@
   function rentabilidadPeriodo(valores, aportado, i0 = 0) {
     const n = valores.length, serie = new Array(n).fill(null);
     const ap = i => (i >= 0 && aportado[i] != null ? aportado[i] : 0);
-    // El primer día del periodo es la base, salvo que sea el de la primera compra: entonces
-    // cuenta lo que va de lo pagado al cierre, como en el índice del servidor.
+    // El % empieza en el cierre del primer día, como la rentabilidad de «Ver más detalles». Los
+    // euros sí cuentan ese día si es el de la primera compra (de lo pagado al cierre), para que
+    // lo ganado cuadre con lo que tienes menos lo que has puesto.
     const conCompra = !(valores[i0 - 1] > 1);
     let nivel = 1, ant = null, pico = 1, caida = 0;
     for (let i = i0; i < n; i++) {
       const v = valores[i];
       if (v != null) {
-        const f = i > i0 || conCompra ? ap(i) - ap(i - 1) : 0;
+        const f = i > i0 ? ap(i) - ap(i - 1) : 0;
         if (ant == null || ant <= 1) { if (i > i0 || f > 0) nivel *= f > 0 ? Math.max(v / f, 0.05) : 1; }
         else nivel *= 1 + Math.max((v - f) / ant - 1, -0.95);
         ant = v;

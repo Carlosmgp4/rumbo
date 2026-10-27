@@ -207,10 +207,10 @@ test("rentabilidad de un periodo: sin el efecto de cuándo entra el dinero", () 
   // Compras 1000 el día 0 (cierra en 990), sube un 10 %, metes 1000 más y baja un 5 %.
   const valores = [990, 1089, 2089, 1984.55], aportado = [1000, 1000, 2000, 2000];
   const todo = C.rentabilidadPeriodo(valores, aportado);
-  cerca(todo.serie[0], -0.01, 1e-9);                   // el día de la compra: de lo pagado al cierre
-  cerca(todo.serie[2], 0.089, 1e-9);                   // los 1000 nuevos no cuentan como subida
-  cerca(todo.total, 0.99 * 1.1 * 0.95 - 1, 1e-9);
-  cerca(todo.ganado, 1984.55 - 2000, 1e-9);            // en euros: valor menos lo puesto
+  assert.equal(todo.serie[0], 0);                       // el % empieza en el cierre del primer día
+  cerca(todo.serie[2], 0.1, 1e-9);                     // los 1000 nuevos no cuentan como subida
+  cerca(todo.total, 1.1 * 0.95 - 1, 1e-9);
+  cerca(todo.ganado, 1984.55 - 2000, 1e-9);            // en euros sí: valor menos lo puesto
   cerca(todo.caida, -0.05, 1e-9);
   const desde1 = C.rentabilidadPeriodo(valores, aportado, 1);
   assert.equal(desde1.serie[0], null);
@@ -219,8 +219,8 @@ test("rentabilidad de un periodo: sin el efecto de cuándo entra el dinero", () 
   cerca(desde1.ganado, (1984.55 - 1089) - 1000, 1e-9);  // sin contar los 1000 que metiste
   // El periodo empieza el mismo día de la primera compra.
   const tarde = C.rentabilidadPeriodo([null, 990, 1089], [0, 1000, 1000], 1);
-  cerca(tarde.total, 0.99 * 1.1 - 1, 1e-9);
-  cerca(tarde.ganado, 89, 1e-9);
+  cerca(tarde.total, 0.1, 1e-9);
+  cerca(tarde.ganado, 89, 1e-9);                        // los 10 € del primer día cuentan en euros
 });
 
 test("aportaciones periódicas: avisa de las que faltan desde la última", () => {
