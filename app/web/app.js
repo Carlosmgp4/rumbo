@@ -103,6 +103,7 @@
     moneda: recuerda.lee("patrimonio.moneda") || "EUR",
     rangoFondo: "todo",
     rangoComp: "todo",
+    compModo: recuerda.lee("patrimonio.compModo") === "pct" ? "pct" : "eur",
     ocultos: new Set(),
   };
 
@@ -139,13 +140,51 @@
       : `Con el ${r.nombre} tendrías ${G.fmtEur(Math.abs(dif), 0)} más (${G.fmtPctSigno(-dif / C.tuValor, 1)}).`;
     const caja = (et, v, extra, cls = "") => `<div class="compCaja ${cls}"><span>${et}</span><b>${v}</b>${extra ? `<small>${extra}</small>` : ""}</div>`;
     pintaSegm($("#compRango"), RANGOS, estado.rangoComp, id => { estado.rangoComp = id; pintaComparacion(); });
+    pintaSegm($("#compModo"), [{ id: "eur", et: "€" }, { id: "pct", et: "%" }], estado.compModo, id => {
+      estado.compModo = id; recuerda.guarda("patrimonio.compModo", id); pintaComparacion();
+    });
     const i0 = desdeIdx(estado.rangoComp), cortaC = arr => (arr || []).slice(i0);
-    $("#compTitular").innerHTML =
-      caja("Tú tienes hoy", G.fmtEur(C.tuValor, 0), `TIR ${G.fmtPctSigno(C.tuTir, 1)}`) +
-      caja(`Con el ${r.nombre} tendrías`, G.fmtEur(r.valor, 0), `TIR ${G.fmtPctSigno(r.tir, 1)}`) +
-      caja("Has puesto de tu bolsillo", G.fmtEur(C.aportado[C.aportado.length - 1], 0), "compras menos ventas") +
-      caja("Veredicto", veredicto, "", "veredicto");
-    G.multiLinea($("#grafComparacion"), {
+    const enPct = estado.compModo === "pct", todo = estado.rangoComp === "todo";
+    // Lo de cada periodo, limpio del efecto de cuándo metiste el dinero (calculos.js).
+    const Calc = window.Calculos;
+    const tuP = Calc.rentabilidadPeriodo(C.tuya, C.aportado, i0), refP = Calc.rentabilidadPeriodo(r.serie, C.aportado, i0);
+    const ultimo = C.aportado[C.aportado.length - 1];
+    const puesto = i0 > 0 && C.tuya[i0 - 1] > 1 ? ultimo - C.aportado[i0] : ultimo - (C.aportado[i0 - 1] || 0);
+    if (todo && !enPct) {
+      $("#compTitular").innerHTML =
+        caja("Tú tienes hoy", G.fmtEur(C.tuValor, 0), `TIR ${G.fmtPctSigno(C.tuTir, 1)}`) +
+        caja(`Con el ${r.nombre} tendrías`, G.fmtEur(r.valor, 0), `TIR ${G.fmtPctSigno(r.tir, 1)}`) +
+        caja("Has puesto de tu bolsillo", G.fmtEur(ultimo, 0), "compras menos ventas") +
+        caja("Veredicto", veredicto, "", "veredicto");
+    } else {
+      const cuando = todo ? "desde el principio" : "en este periodo";
+      const parejos = `${todo ? "Desde el principio" : "En este periodo"} vas prácticamente igual que el ${r.nombre}.`;
+      const pts = (tuP.total - refP.total) * 100;
+      const difEur = tuP.ganado - refP.ganado;
+      const verP = Math.abs(pts) < 0.5 ? parejos
+        : pts > 0 ? `Vas ${pts.toFixed(1).replace(".", ",")} puntos por delante del ${r.nombre} ${cuando}.`
+        : `El ${r.nombre} ha ido ${Math.abs(pts).toFixed(1).replace(".", ",")} puntos mejor ${cuando}.`;
+      const verE = Math.abs(difEur) < 1 ? parejos
+        : difEur > 0 ? `Has ganado ${G.fmtEur(difEur, 0)} más que con el ${r.nombre} ${cuando}.`
+        : `Con el ${r.nombre} habrías ganado ${G.fmtEur(-difEur, 0)} más ${cuando}.`;
+      const eurS = v => (v >= 0 ? "+" : "−") + G.fmtEur(Math.abs(v), 0);
+      const cifra = p => enPct ? G.fmtPctSigno(p.total, 1) : eurS(p.ganado);
+      const otra = p => (enPct ? eurS(p.ganado) : G.fmtPctSigno(p.total, 1)) + ` · peor caída ${G.fmtPct(p.caida, 1)}`;
+      $("#compTitular").innerHTML =
+        caja(`Tu cartera ${cuando}`, cifra(tuP), otra(tuP)) +
+        caja(`El ${r.nombre} ${cuando}`, cifra(refP), otra(refP)) +
+        caja(`Has puesto ${cuando}`, G.fmtEur(puesto, 0), "compras menos ventas") +
+        caja("Veredicto", enPct ? verP : verE, "", "veredicto");
+    }
+    G.multiLinea($("#grafComparacion"), enPct ? {
+      fechas: cortaC(D.fechas), alto: 300,
+      series: [
+        { nombre: "Tu cartera", valores: cortaC(tuP.serie), color: G.css("--s1"), destacado: true },
+        { nombre: "El " + r.nombre, valores: cortaC(refP.serie), color: G.css("--s2") },
+      ],
+      formatoY: v => G.fmtPct(v, 0),
+      formatoValor: v => G.fmtPctSigno(v, 1),
+    } : {
       fechas: cortaC(D.fechas), alto: 300,
       series: [
         { nombre: "Tu cartera", valores: cortaC(C.tuya), color: G.css("--s1"), destacado: true },
@@ -157,8 +196,10 @@
       desdeCero: true,
     });
     const ley = (c, t) => `<span class="leyItem"><i style="background:${G.css(c)}"></i>${t}</span>`;
-    $("#compNota").innerHTML = `<span class="leyComp">${ley("--s1", "Tu cartera")}${ley("--s2", "Con el " + r.nombre)}${ley("--tinta3", "Tu dinero puesto")}</span>
-      ${r.detalle} Solo cuenta los productos con compras anotadas (no las cuentas ni lo
+    $("#compNota").innerHTML = `<span class="leyComp">${ley("--s1", "Tu cartera")}${ley("--s2", (enPct ? "El " : "Con el ") + r.nombre)}${enPct ? "" : ley("--tinta3", "Tu dinero puesto")}</span>
+      ${enPct ? `En %: cuánto ha subido o bajado tu dinero ${todo ? "desde el principio" : "en el periodo"}, sin contar cuándo
+      metiste o sacaste dinero (rentabilidad ponderada por tiempo, la de «Ver más detalles»). Por eso no coincide con tu
+      ganancia sobre lo aportado. ` : ""}${r.detalle} Solo cuenta los productos con compras anotadas (no las cuentas ni lo
       que valoras a mano sin movimientos), desde el ${G.fmtFecha(C.desde)}. Sin impuestos ni comisiones de compra.
       ${r.aviso ? "<br>" + r.aviso : ""}`;
   }

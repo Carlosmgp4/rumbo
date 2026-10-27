@@ -276,6 +276,35 @@
     return falta.map(f => aporte * f / sumaFalta);
   }
 
+  /** La rentabilidad de un periodo, limpia del efecto de cuándo entra o sale el dinero: la misma
+      cuenta que el índice de «Ver más detalles» (motor.py, indice_twr), pero empezando en 0 el
+      día «i0». «valores» es el valor de cada día y «aportado», lo puesto acumulado (compras menos
+      ventas), los dos día a día. Devuelve la serie (null antes de i0), la rentabilidad final,
+      lo ganado en euros en el periodo y la peor caída desde un máximo dentro de él. */
+  function rentabilidadPeriodo(valores, aportado, i0 = 0) {
+    const n = valores.length, serie = new Array(n).fill(null);
+    const ap = i => (i >= 0 && aportado[i] != null ? aportado[i] : 0);
+    // El primer día del periodo es la base, salvo que sea el de la primera compra: entonces
+    // cuenta lo que va de lo pagado al cierre, como en el índice del servidor.
+    const conCompra = !(valores[i0 - 1] > 1);
+    let nivel = 1, ant = null, pico = 1, caida = 0;
+    for (let i = i0; i < n; i++) {
+      const v = valores[i];
+      if (v != null) {
+        const f = i > i0 || conCompra ? ap(i) - ap(i - 1) : 0;
+        if (ant == null || ant <= 1) { if (i > i0 || f > 0) nivel *= f > 0 ? Math.max(v / f, 0.05) : 1; }
+        else nivel *= 1 + Math.max((v - f) / ant - 1, -0.95);
+        ant = v;
+      }
+      serie[i] = nivel - 1;
+      pico = Math.max(pico, nivel);
+      caida = Math.min(caida, nivel / pico - 1);
+    }
+    const u = n - 1, base = conCompra ? [0, ap(i0 - 1)] : [valores[i0] || 0, ap(i0)];
+    const ganado = n ? ((valores[u] || 0) - base[0]) - (ap(u) - base[1]) : 0;
+    return { serie, total: n ? serie[u] : null, ganado, caida };
+  }
+
   // Aportaciones periódicas que toca anotar: las que caen después de la última añadida y
   // hasta hoy (el día elegido de cada mes; en meses más cortos, el último día).
   function periodicasPendientes(periodicas, idsProductos, hoy) {
@@ -356,7 +385,7 @@
 
   return {
     leeImporte, xirr, metricas, agregaExposicion, esLiquidez, resumenLiquidez,
-    gruposReparto, filasReparto, repartirAportacion, normalizaReparto, tipoReparto, TIPOS_REPARTO,
+    gruposReparto, filasReparto, repartirAportacion, rentabilidadPeriodo, normalizaReparto, tipoReparto, TIPOS_REPARTO,
     cuentaPorDefecto, cuentaEnReparto, FUERA_DE_BOLSA, periodicasPendientes,
     resumenParaCompartir,
   };
